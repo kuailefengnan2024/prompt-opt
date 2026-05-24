@@ -1,6 +1,5 @@
 # SkillOpt: Executive Strategy for Self-Evolving Agent Skills
 
-> ⚠️ **This is a preliminary draft release. A formal open-source release will follow.**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

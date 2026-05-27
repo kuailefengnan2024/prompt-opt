@@ -1,0 +1,25 @@
+_base_: ../_base_/default.yaml
+
+# T2I prompt 优化（待实现 skillopt/envs/t2i/）
+# mode: direct  — Skill 文档 = T2I prompt 本体 → 直连 T2I
+# mode: meta    — Skill 文档 = 写 prompt 规则 → LLM(Skill+brief) → T2I（未来）
+
+train:
+  batch_size: 1
+  accumulation: 1
+  num_epochs: 4
+
+evaluation:
+  sel_env_num: 0
+  test_env_num: 0
+
+env:
+  name: t2i
+  mode: direct
+  skill_init: skillopt/envs/t2i/skills/initial.md
+  split_mode: split_dir
+  split_dir: data/t2i_split
+  train_seeds: 8
+  gate_seeds: 8
+  workers: 4
+  limit: 0

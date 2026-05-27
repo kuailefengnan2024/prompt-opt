@@ -1,129 +1,160 @@
-# SkillOpt: 自进化 Agent 技能的执行策略
+# prompt-opt：基于 SkillOpt 的文生图 Prompt 优化
 
-*像训练神经网络一样训练 Agent 技能——使用 epoch、（mini-）batch size、学习率与验证门控——但无需改动模型权重。*
+*Fork 自 [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt)。保留 Reflect + Gate 训练循环，改造为：**给定固定设计要求，迭代寻找最优文生图 prompt**。*
 
-[![Project Page](https://img.shields.io/badge/Project%20Page-SkillOpt-8dbb3c)](https://microsoft.github.io/SkillOpt/) [![Paper](https://img.shields.io/badge/Paper-arXiv-b31b1b)](https://arxiv.org/abs/2605.23904) [![Project Video](https://img.shields.io/badge/Project%20Video-Watch%20Demo-ff0000)](https://youtu.be/JUBMDTCiM0M) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-## 🎬 SkillOpt 演示视频
-
-https://github.com/user-attachments/assets/eb12d3bc-371c-467f-904d-91b61f339ed7
-
-<p align="center">
-  <a href="https://youtu.be/JUBMDTCiM0M"><b>▶ 在 YouTube 观看完整演示</b></a>
-</p>
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Upstream SkillOpt](https://img.shields.io/badge/Upstream-SkillOpt-8dbb3c)](https://github.com/microsoft/SkillOpt)
 
 ---
 
-## 维护者环境与工程目标
+## 个人情况与偏好
 
-> 本节记录本 fork 的维护者背景与改造方向，便于后续 Agent / 协作者对齐上下文。
+> 维护者背景、算力条件与工程约束，供 Agent / 协作者对齐上下文。
 
-### 个人环境与算力
+### 1. 硬件与模型 API
+- **身份**：字节跳动内部员工
+- **本地硬件**：Intel i9-10980XE @3.0GHz（18 核 36 线程）+ NVIDIA RTX 4090 24GB + Windows x64
+- **模型 API**：拥有字节内部 **LLM / VLM / T2I** 等 SOTA 模型调用权限；**成本几乎无约束**，开发调试鼓励高频、大吞吐调用
+- **云端算力**：可申请 NVIDIA A100
+- **调度倾向**：轻量与敏感调试走本地 4090；中大型训练 / 推理 / 微调走云端 A100
+- **审美标准**：维护者有一套**自定义审美 rubric**，可对出图给出相对准确的分数（作为本项目主要 reward 来源）
 
-| 项 | 配置 |
+### 2. 代码与架构原则
+- **架构**：高内聚低耦合，SOLID；拒绝「能跑就行」的临时代码
+- **文件头注释（强制）**：每个代码文件开头中文三要素 — **【功能描述】【输入】【输出】**
+- **TCE 友好**：配置 / 密钥 / 环境信息经环境变量注入，严禁硬编码
+- **`.gitignore` 完备**：虚拟环境、密钥、图片资产、数据集、大文件缓存不上云
+
+### 3. 测试与 README 规范
+- 测试脚本：参数置顶，自包含直跑，拒绝 `--mode=test` 式 Flag
+- README：Mermaid 流程图、目录树 + 一句话释义、Inputs/Outputs、踩坑记录；重大改动即时同步
+
+---
+
+## 项目改造目标
+
+### 当下：单需求 → 最优文生图 Prompt
+
+| 维度 | 说明 |
 |---|---|
-| **身份** | 字节跳动内部员工 |
-| **本地硬件** | Intel i9-10980XE（18C/36T）+ NVIDIA RTX 4090 24GB，Windows x64 |
-| **模型 API** | 字节内部 SOTA 模型全量调用权限，开发调试成本约束宽松 |
-| **云端算力** | 可申请 NVIDIA A100 |
-| **调度策略** | 轻量 / 敏感调试 → 本地 4090；中大型训练 / 推理 / 微调 → 云端 A100 |
-
-### 本项目改造目标
-
-1. **基于 SkillOpt 做 Agent Skill 自进化训练**：保留 ReflACT 六阶段循环 + WebUI 可视化，聚焦可复现实验与工程化落地。
-2. **拒绝「能跑就行」**：高内聚低耦合，严格 SOLID；模块职责单一、命名自解释，不写临时代码。
-3. **TCE 友好部署**：配置 / 密钥 / 环境信息一律环境变量注入，严禁硬编码；`.gitignore` 完备，不上传数据、密钥、本地缓存。
-4. **代码规范**：每个 `.py` 文件头注释三要素（功能描述 / 输入 / 输出）；测试与工具脚本参数置顶，自包含直跑。
-5. **目录整洁**：核心开发保留 `configs/`、`skillopt/`、`scripts/`、`skillopt_webui/`；落地页、文档站等归档至 `backup/archive/`。
-
-### README 维护约定
-
-架构调整、核心依赖或接口变更时同步更新本文档；保持 Mermaid 流程图、目录树、Inputs/Outputs、踩坑记录四要素精炼可用。
-
----
-
-## configs 与 skillopt/envs 是什么关系？
-
-**一句话：`configs/{benchmark}/` 管「怎么训」，`skillopt/envs/{benchmark}/` 管「训什么任务、怎么跑」。** 两者按 benchmark 名称 **一一对应**，共 6 套。
+| **要解决的问题** | 给定**固定**设计要求（主标题、副标题、其他约束），自动迭代找到**审美得分最高**的文生图 prompt |
+| **优化对象** | **Prompt 文本本身**（SkillOpt 产物 `best_skill.md`）；**不是**设计要求 |
+| **设计要求** | 定死作输入，不参与训练；可只有 1 条 brief |
+| **奖励信号** | **实时在线**：当前 prompt → T2I（多 seed）→ 出图 → **自定义审美 / VLM 打分** → 多次取平均 |
+| **Gate** | 不用另一套设计 brief；用**换一批 seed 重出图再打分**，防碰巧高分 |
+| **工具链** | Prompt **直连 T2I**；Reflect 用 LLM 分析低分并改 prompt（**不**加一层 LLM 写 prompt） |
 
 ```mermaid
 flowchart LR
-    subgraph configs["configs/（YAML 配置）"]
-        base["_base_/default.yaml<br/>全局默认超参"]
-        cfg["searchqa/default.yaml<br/>继承 + 覆盖"]
-    end
+    Brief["固定设计要求"] --> Prompt["被优化的 Prompt"]
+    Prompt --> T2I["T2I 多 seed"]
+    T2I --> IMG["出图"]
+    IMG --> Score["审美/VLM 打分\n多次平均"]
+    Score --> Reflect["LLM Reflect"]
+    Reflect --> Prompt
+    Score --> Gate["Gate: 新 seed 重评"]
+```
 
-    subgraph envs["skillopt/envs/（Python 实现）"]
-        adapter["searchqa/adapter.py<br/>EnvAdapter 入口"]
-        dl["dataloader.py"]
-        rollout["rollout.py"]
-        skill["skills/initial.md"]
-    end
+**固定输入示例：**
 
+```json
+{
+  "id": "poster_main",
+  "main_title": "夏日音乐节",
+  "sub_title": "2026 · 北京站",
+  "requirements": "赛博朋克；蓝紫主色；16:9；留主标题区"
+}
+```
+
+**无需**预先构建 `(prompt, score)` 静态数据集；每步 reward 由 T2I + 打分**实时在线**产生。
+
+**奖励数据从哪来（实时生成，非预先标注）：**
+
+```
+当前 prompt → T2I（N 个 seed）→ N 张图 → 审美/VLM 各打分 → 取平均 = 本步 reward
+Reflect 用 seed 组 A；Gate 接受前用 seed 组 B 重评（同一条 brief，换 seed，非换设计稿）
+```
+
+每步产物 `(prompt_v, images[], scores[], mean_score)` 可落盘到 `outputs/`，供分析；**不必**事先攒静态训练集。
+
+### 为何原项目要 train/val，本项目却不必？
+
+| | 原 SkillOpt | 本项目（当下） |
+|--|-------------|----------------|
+| 优化对象 | 跨任务通用的 **Skill 写法** | **单条 T2I prompt 文本** |
+| train 数据 | 很多**不同任务**（不同 QA 题等） | **1 条固定设计 brief 即可** |
+| val 数据 | **换一批不同题目**，防 Skill 只会做 train 题 | **同一 brief + 换 seed 重出图**，防碰巧高分 |
+| 奖励 | rollout 在线算（EM/F1、环境成功率） | rollout 在线算（T2I + 审美分，多 seed 平均） |
+| 需要 gold prompt 吗 | 否 | **否** |
+
+原项目要 train/val，是因为学的是**跨任务的泛化能力**；不是要你准备「若干同类文本 + 预先标好的最优 prompt」。  
+本项目单需求场景：**不需要按设计稿切 train/val**；若框架目录结构要求 `train/`、`val/`，填同一条 brief 占位即可，语义上靠 `train_seeds` / `gate_seeds` 区分。
+
+### 未来 TODO（暂不实现）
+
+- 训练「**文生图 Prompt 生成能力**」Meta-Skill：多种不同设计要求下学会写 prompt
+- 届时再恢复多 brief + 真 train/val 泛化
+
+### 与原 SkillOpt 的差异
+
+| | 原 SkillOpt | 本仓库 |
+|--|-------------|--------|
+| 优化对象 | 跨任务通用 Skill | **单需求 T2I prompt 文本** |
+| 数据 | 很多不同任务 | **1 条 brief 即可** |
+| 奖励 | EM/F1、环境成功率 | T2I 出图 + 审美分（多 seed 平均） |
+| Target LLM | 必须 | **可省略**（prompt 直连 T2I） |
+
+---
+
+## configs 与 skillopt/envs 是什么？
+
+**一句话：`configs/{name}/` = 实验配方（超参、路径）；`skillopt/envs/{name}/` = 运行逻辑（怎么 rollout、怎么打分、怎么 reflect）。** 文件夹名按 benchmark **一一对应**，通过 YAML 里的 `env.name` 绑定。
+
+> 这些是 **Microsoft SkillOpt 原版** 为 6 种 benchmark 准备的；改造 T2I 时会新增 `t2i/`，其余可归档到 `backup/` 仅作参考。
+
+```mermaid
+flowchart LR
+    base["_base_/default.yaml"] --> cfg["searchqa/default.yaml"]
+    cfg -->|"env.name"| adapter["envs/searchqa/adapter.py"]
+    adapter --> rollout["rollout.py → 打分"]
+    cfg -->|"env.skill_init"| skill["skills/initial.md"]
     train["scripts/train.py"] --> cfg
-    base --> cfg
-    cfg -->|"env.name=searchqa"| adapter
-    adapter --> dl --> rollout
-    cfg -->|"env.skill_init"| skill
 ```
 
-| 目录 | 职责 | 改什么场景 |
-|---|---|---|
-| **`configs/_base_/`** | 所有实验共享的默认超参（模型、epoch、LR、gate 等） | 调全局默认值 |
-| **`configs/{benchmark}/`** | 某个 benchmark 的实验配方：继承 `_base_`，覆盖 batch、workers、数据路径等 | 开新实验、改超参 |
-| **`skillopt/envs/{benchmark}/`** | 该 benchmark 的**全部运行逻辑**：读数据、执行任务、打分、反思 | 换任务格式、改 agent 行为、加工具 |
-| **`skillopt/envs/_template/`** | 新增 benchmark 的脚手架（复制改名即可） | 接入新数据集 / 新环境 |
-| **`skillopt/envs/base.py`** | 所有 benchmark 共同遵守的 `EnvAdapter` 接口 | 一般不动 |
-
-### configs/ 每个文件夹
-
-| 文件夹 | 对应任务类型 | 配置文件 |
-|---|---|---|
-| `_base_/` | （非 benchmark）全局默认 | `default.yaml` |
-| `searchqa/` | 检索增强问答 | `default.yaml` |
-| `alfworld/` | 具身智能文本环境 | `default.yaml` |
-| `docvqa/` | 文档视觉问答 | `default.yaml` |
-| `livemathematicianbench/` | 数学推理 | `default.yaml` |
-| `spreadsheetbench/` | Excel 代码生成 / ReAct | `default.yaml` |
-| `officeqa/` | 办公场景工具调用 QA | `default.yaml` |
-
-YAML 典型结构（继承链：`configs/searchqa/default.yaml` → `_base_/default.yaml`）：
-
-```yaml
-_base_: ../_base_/default.yaml   # 继承全局默认
-train:
-  batch_size: 40                 # 覆盖训练超参
-env:
-  name: searchqa                   # 绑定 skillopt/envs/searchqa/
-  skill_init: skillopt/envs/searchqa/skills/initial.md
-  split_dir: data/searchqa_split
-```
-
-### skillopt/envs/ 每个文件夹
-
-| 文件夹 | 核心代码 | 特有内容 |
-|---|---|---|
-| `searchqa/` | adapter + dataloader + rollout + reflect | 单轮 QA |
-| `alfworld/` | 同上 + `vendor/` | 具身环境封装、记忆与多轮 prompt |
-| `docvqa/` | adapter + dataloader + rollout | 文档 QA |
-| `livemathematicianbench/` | 同上 + reflect | 数学任务 |
-| `spreadsheetbench/` | codegen_agent / react_agent / executor | Excel 执行沙箱 |
-| `officeqa/` | tool_runtime | 办公工具调用 |
-| `_template/` | 模板文件 | 新 benchmark 复制起点 |
-
-每个 env 子目录内部约定：
-
-| 文件 / 目录 | 职责 |
+| 目录 | 职责 |
 |---|---|
-| `adapter.py` | 实现 `EnvAdapter`，trainer 唯一入口 |
-| `dataloader.py` | 解析 `split_dir` 数据，生成 batch |
-| `rollout.py` | Target 模型执行任务 → 轨迹 + 分数 |
-| `reflect.py` | （可选）环境专属反思；缺省走通用 `gradient/reflect.py` |
-| `evaluator.py` | hard/soft 打分规则 |
-| `prompts/` | 该 benchmark 专用 prompt |
-| `skills/initial.md` | 训练起点 skill 文档 |
+| **`configs/_base_/`** | 全局默认超参（epoch、LR、gate、模型后端等） |
+| **`configs/{benchmark}/`** | 某 benchmark 实验配方：继承 `_base_` 并覆盖 batch、workers、数据路径 |
+| **`skillopt/envs/{benchmark}/`** | 运行逻辑：读数据 → rollout → 打分 → reflect |
+| **`skillopt/envs/_template/`** | 新 benchmark 脚手架（改造时复制为 `t2i/`） |
+| **`skillopt/envs/base.py`** | 所有 env 共同遵守的 `EnvAdapter` 接口 |
 
-> **为何分两套目录？** 配置（YAML）与实现（Python）解耦：调参不改代码，换任务逻辑不改全局默认；新增 benchmark 只需各加一个 `configs/xxx/` + `skillopt/envs/xxx/`。
+### configs/ 各文件夹（原版 benchmark，作参考）
+
+| 文件夹 | 任务类型 |
+|---|---|
+| `_base_/` | 全局默认（非 benchmark） |
+| `searchqa/` | 检索增强问答 |
+| `alfworld/` | 具身智能 |
+| `docvqa/` | 文档视觉问答 |
+| `livemathematicianbench/` | 数学推理 |
+| `spreadsheetbench/` | Excel 代码生成 |
+| `officeqa/` | 办公工具 QA |
+
+YAML 通过 `_base_: ../_base_/default.yaml` 继承；`env.name: searchqa` 绑定 `skillopt/envs/searchqa/`。
+
+### skillopt/envs/ 各文件夹
+
+每个子目录通常含：`adapter.py`（入口）、`dataloader.py`、`rollout.py`、`evaluator.py`、`prompts/`、`skills/initial.md`。
+
+| 文件夹 | 特点 |
+|---|---|
+| `searchqa/` | 单轮 QA，结构最简，适合抄 adapter 模式 |
+| `alfworld/` | 含 `vendor/`，具身环境 + 多轮 |
+| `spreadsheetbench/` | codegen / react agent + 执行沙箱 |
+| `officeqa/` | 工具调用 runtime |
+| `_template/` | 新 env 模板 |
+
+> **改造方向**：新增 `configs/t2i/` + `skillopt/envs/t2i/`；原版 6 套可逐步归档至 `backup/`。
 
 ---
 
@@ -214,30 +245,31 @@ prompt-opt/
 
 归档 / 快照：修改 `scripts/backup.py` 顶部 `MODE` 后执行 `python scripts/backup.py`。
 
-### 项目级 Inputs / Outputs
-
-| 类型 | 路径 / 说明 |
-|---|---|
-| **输入** | `configs/{benchmark}/default.yaml` — 超参与模型配置 |
-| **输入** | `data/{split}/train\|val\|test/items.json` — 任务数据 |
-| **输入** | `.env` — `AZURE_OPENAI_ENDPOINT` 等 API 凭证 |
-| **输入** | `skillopt/envs/{benchmark}/skills/initial.md` — 初始 skill |
-| **输出** | `outputs/<run>/best_skill.md` — 验证集最优 skill |
-| **输出** | `outputs/<run>/skills/skill_vXXXX.md` — 每步 skill 快照 |
-| **输出** | `outputs/<run>/history.json` — 逐步训练记录 |
-| **输出** | `outputs/<run>/steps/step_XXXX/` — 每步 patch / eval 产物 |
-
-> 运行产物目录 `outputs/`、`data/` 由 `scripts/backup.py` 快照到 `backup/snapshots/`（已在 `.gitignore`）。
-
 ### 踩坑记录
 
 | 问题 | 解法 |
 |---|---|
-| LLM 全部失败 | 检查 `AZURE_OPENAI_ENDPOINT` 或字节内部 API 环境变量是否注入 |
-| `train_size` 报错 | 在对应 `configs/*/default.yaml` 的 `train.train_size` 填写，或确保 `split_dir` 数据可加载 |
-| WebUI 看不到进度 | 确认 `out_root` 与训练脚本一致；训练需写入 `outputs/<run>/history.json` |
-| 本地 4090 跑大 batch OOM | 降低 `batch_size` / `workers`，或改走云端 A100 |
-| 归档后找不到 docs / 落地页 | 从 `backup/archive/` 对应分类移回原路径 |
+| LLM 调用失败 | 检查字节内部 API / `.env` 环境变量是否注入 |
+| 单 brief 无 val 语义 | `train/`、`val/` 填同一条占位；Gate 用 `gate_seeds` 区分 |
+| 分数波动大 | 增大 T2I seed 数，取平均 / 中位数 |
+| 归档后找不到 docs | 见 `backup/archive/docs_site/` |
+
+### 项目级 Inputs / Outputs
+
+| 类型 | 路径 / 说明 |
+|---|---|
+| **输入** | 固定设计要求 — `main_title` / `sub_title` / `requirements`（JSON 或配置注入） |
+| **输入** | `skillopt/envs/t2i/skills/initial.md` — 初始 seed prompt（待建） |
+| **输入** | `configs/t2i/default.yaml` — 超参、`train_seeds` / `gate_seeds` 等（待建） |
+| **输入** | 字节内部 API — LLM（Reflect）、T2I（出图）、VLM / 审美模型（打分） |
+| **输入** | `.env` — API 凭证（环境变量注入，禁止硬编码） |
+| **输出** | `outputs/<run>/best_skill.md` — **最优 T2I prompt** |
+| **输出** | `outputs/<run>/steps/step_XXXX/images/` — 各 seed 出图与分数 |
+| **输出** | `outputs/<run>/history.json` — 逐步训练记录 |
+
+> **无需**预先构建 `(prompt, score)` 静态数据集；每步 reward 由 T2I + 打分**实时**产生，多 seed 平均降方差。
+
+> 运行产物目录 `outputs/`、`data/` 由 `scripts/backup.py` 快照到 `backup/snapshots/`（已在 `.gitignore`）。
 
 ---
 
@@ -294,42 +326,15 @@ export QWEN_CHAT_MODEL="Qwen/Qwen3.5-4B"
 
 ## 数据准备
 
-SkillOpt 要求数据组织为**划分目录**，包含 `train/`、`val/`、`test/` 子目录，各子目录内放置 JSON 文件（如 `items.json`）。
+### 改造目标（T2I，单固定需求）
 
-```
-data/my_split/
-├── train/items.json
-├── val/items.json
-└── test/items.json
-```
+- **设计要求**：1 条 brief 即可；框架若要求 `split_dir`，`train/` 与 `val/` 可填**同一条**（仅占位）
+- **奖励数据**：不预先标注；每轮 `prompt → T2I → 打分` 在线产生，`train_seeds` 用于 Reflect，`gate_seeds` 用于 Gate
+- **hard / soft**：`soft = 审美分归一化`；`hard = 是否过阈值`（或令 `hard = soft`）
 
-每个 JSON 文件为任务项数组。必填字段因基准而异。SearchQA 示例如下：
+### 原版 benchmark 数据格式（参考）
 
-```json
-[
-  {
-    "id": "unique_item_id",
-    "question": "Who wrote the novel ...",
-    "context": "[DOC] relevant passage text ...",
-    "answers": ["expected answer"]
-  }
-]
-```
-
-各基准的精确格式见 `skillopt/envs/<benchmark>/dataloader.py`。
-
-> **说明：** 本仓库不包含基准数据集。请按上述格式自行准备数据。
-
-### 支持的基准
-
-| 基准 | 类型 | 配置 |
-|---|---|---|
-| SearchQA | 问答 | `configs/searchqa/default.yaml` |
-| ALFWorld | 具身智能体 | `configs/alfworld/default.yaml` |
-| DocVQA | 文档问答 | `configs/docvqa/default.yaml` |
-| LiveMathematicianBench | 数学 | `configs/livemathematicianbench/default.yaml` |
-| SpreadsheetBench | 代码生成 | `configs/spreadsheetbench/default.yaml` |
-| OfficeQA | 工具增强问答 | `configs/officeqa/default.yaml` |
+原 SkillOpt 要求 `train/`、`val/`、`test/` 各含 `items.json`。SearchQA 示例见 `skillopt/envs/searchqa/dataloader.py`。配置与 env 对应关系见上文「configs 与 skillopt/envs」。
 
 ---
 
@@ -448,16 +453,6 @@ python -m skillopt_webui.app --share
 
 ---
 
-## 引用
+## 上游引用
 
-```bibtex
-@misc{yang2026skilloptexecutivestrategyselfevolving,
-      title={SkillOpt: Executive Strategy for Self-Evolving Agent Skills}, 
-      author={Yifan Yang and Ziyang Gong and Weiquan Huang and Qihao Yang and Ziwei Zhou and Zisu Huang and Yan Li and Xuemei Gao and Qi Dai and Bei Liu and Kai Qiu and Yuqing Yang and Dongdong Chen and Xue Yang and Chong Luo},
-      year={2026},
-      eprint={2605.23904},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2605.23904}
-}
-```
+本仓库训练循环源自 Microsoft SkillOpt — [arXiv:2605.23904](https://arxiv.org/abs/2605.23904)。 BibTeX 见 `backup/archive/docs_site/` 或上游仓库。

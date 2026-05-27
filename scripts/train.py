@@ -3,11 +3,11 @@
 
 Usage
 -----
-    python scripts/train.py --config configs/alfworld/default.yaml
+    python scripts/train.py --config configs/t2i/default.yaml
 
 Any YAML key can be overridden from the command line::
 
-    python scripts/train.py --config configs/alfworld/default.yaml \\
+    python scripts/train.py --config configs/t2i/default.yaml \\
         --batch_size 40 --num_epochs 2 --seed 123
 
 Run ``python scripts/train.py --help`` for a full list of options.
@@ -31,91 +31,7 @@ from skillopt.model.common import default_model_for_backend, normalize_backend_n
 _OPENAI_DEFAULT_MODEL_SENTINELS = {"gpt-5.4", "gpt-5.5"}
 
 
-# ── Environment registry ────────────────────────────────────────────────────
-
-_ENV_REGISTRY: dict[str, type] = {}
-
-
-def _register_builtins() -> None:
-    """Lazy-import built-in adapters so we don't pull heavy deps at CLI parse time."""
-    try:
-        from skillopt.envs.alfworld.adapter import ALFWorldAdapter
-        _ENV_REGISTRY["alfworld"] = ALFWorldAdapter
-    except ImportError:
-        pass  # ALFWorld deps not installed — skip
-    try:
-        from skillopt.envs.searchqa.adapter import SearchQAAdapter
-        _ENV_REGISTRY["searchqa"] = SearchQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.livemathematicianbench.adapter import LiveMathematicianBenchAdapter
-        _ENV_REGISTRY["livemathematicianbench"] = LiveMathematicianBenchAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.babyvision.adapter import BabyVisionAdapter
-        _ENV_REGISTRY["babyvision"] = BabyVisionAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.spreadsheetbench.adapter import SpreadsheetBenchAdapter
-        _ENV_REGISTRY["spreadsheetbench"] = SpreadsheetBenchAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.mmrb.adapter import MMRBAdapter
-        _ENV_REGISTRY["mmrb"] = MMRBAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.docvqa.adapter import DocVQAAdapter
-        _ENV_REGISTRY["docvqa"] = DocVQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.mathverse.adapter import MathVerseAdapter
-        _ENV_REGISTRY["mathverse"] = MathVerseAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.officeqa.adapter import OfficeQAAdapter
-        _ENV_REGISTRY["officeqa"] = OfficeQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.sealqa.adapter import SealQAAdapter
-        _ENV_REGISTRY["sealqa"] = SealQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.swebench.adapter import SWEBenchAdapter
-        _ENV_REGISTRY["swebench"] = SWEBenchAdapter
-    except ImportError:
-        pass
-
-
-def get_adapter(cfg: dict):
-    """Instantiate the environment adapter specified in ``cfg["env"]``."""
-    _register_builtins()
-    env_name = cfg.get("env", "alfworld")
-    if env_name not in _ENV_REGISTRY:
-        raise ValueError(
-            f"Unknown environment '{env_name}'. "
-            f"Available: {list(_ENV_REGISTRY.keys())}"
-        )
-    adapter_cls = _ENV_REGISTRY[env_name]
-
-    # Inspect adapter __init__ signature and only pass accepted kwargs
-    import inspect
-    sig = inspect.signature(adapter_cls.__init__)
-    accepted = set(sig.parameters.keys()) - {"self"}
-    adapter_kwargs: dict = {}
-    for key in accepted:
-        if key in cfg:
-            adapter_kwargs[key] = cfg[key]
-
-    return adapter_cls(**adapter_kwargs)
+from skillopt.envs.registry import get_adapter  # noqa: E402
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

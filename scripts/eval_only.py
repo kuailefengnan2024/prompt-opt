@@ -4,8 +4,8 @@
 Usage
 -----
     python scripts/eval_only.py \
-        --config configs/spreadsheetbench/default.yaml \
-        --skill skillopt/envs/spreadsheetbench/skills/initial.md \
+        --config configs/t2i/default.yaml \
+        --skill skillopt/envs/t2i/skills/initial.md \
         --split_dir /path/to/split \
         --out_root outputs/eval_skill0
 
@@ -40,84 +40,7 @@ _OPENAI_DEFAULT_MODEL_SENTINELS = {"gpt-5.4", "gpt-5.5"}
 from skillopt.utils import compute_score
 
 
-# ── Reuse registry from train.py ───────────────────────────────────────────
-
-_ENV_REGISTRY: dict[str, type] = {}
-
-
-def _register_builtins() -> None:
-    try:
-        from skillopt.envs.alfworld.adapter import ALFWorldAdapter
-        _ENV_REGISTRY["alfworld"] = ALFWorldAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.searchqa.adapter import SearchQAAdapter
-        _ENV_REGISTRY["searchqa"] = SearchQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.livemathematicianbench.adapter import LiveMathematicianBenchAdapter
-        _ENV_REGISTRY["livemathematicianbench"] = LiveMathematicianBenchAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.babyvision.adapter import BabyVisionAdapter
-        _ENV_REGISTRY["babyvision"] = BabyVisionAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.spreadsheetbench.adapter import SpreadsheetBenchAdapter
-        _ENV_REGISTRY["spreadsheetbench"] = SpreadsheetBenchAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.mmrb.adapter import MMRBAdapter
-        _ENV_REGISTRY["mmrb"] = MMRBAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.docvqa.adapter import DocVQAAdapter
-        _ENV_REGISTRY["docvqa"] = DocVQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.mathverse.adapter import MathVerseAdapter
-        _ENV_REGISTRY["mathverse"] = MathVerseAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.officeqa.adapter import OfficeQAAdapter
-        _ENV_REGISTRY["officeqa"] = OfficeQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.sealqa.adapter import SealQAAdapter
-        _ENV_REGISTRY["sealqa"] = SealQAAdapter
-    except ImportError:
-        pass
-    try:
-        from skillopt.envs.swebench.adapter import SWEBenchAdapter
-        _ENV_REGISTRY["swebench"] = SWEBenchAdapter
-    except ImportError:
-        pass
-
-
-def get_adapter(cfg: dict):
-    _register_builtins()
-    env_name = cfg.get("env", "alfworld")
-    if env_name not in _ENV_REGISTRY:
-        raise ValueError(
-            f"Unknown environment '{env_name}'. "
-            f"Available: {list(_ENV_REGISTRY.keys())}"
-        )
-    adapter_cls = _ENV_REGISTRY[env_name]
-
-    import inspect
-    sig = inspect.signature(adapter_cls.__init__)
-    accepted = set(sig.parameters.keys()) - {"self"}
-    adapter_kwargs = {k: cfg[k] for k in accepted if k in cfg}
-    return adapter_cls(**adapter_kwargs)
+from skillopt.envs.registry import get_adapter  # noqa: E402
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────

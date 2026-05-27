@@ -9,6 +9,7 @@ data/
 outputs/
 logs/
 external/
+backup/
 
 /BabyVision/
 /MMRB/

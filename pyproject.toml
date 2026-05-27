@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skillopt"
 version = "0.1.0"
-description = "SkillOpt: Agentic Skill Optimization via Reflective Training Loops"
+description = "prompt-opt: T2I prompt optimization via Reflect + Gate (fork of SkillOpt)"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -34,22 +34,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Benchmark-specific dependencies
-alfworld = ["alfworld>=0.4.0", "gymnasium>=0.29.0"]
 # Claude model backend
 claude = ["claude-agent-sdk>=0.1.0"]
 # Qwen local model backend (via vLLM)
 qwen = ["vllm>=0.4.0"]
-# Documentation site
-docs = ["mkdocs-material>=9.5.0", "mkdocstrings[python]>=0.24.0"]
 # WebUI dashboard
 webui = ["gradio>=4.0.0"]
 # Development tools
 dev = ["ruff>=0.4.0", "pytest>=8.0.0"]
-# All optional dependencies (except docs/dev/webui)
+# Optional model backends bundle
 all = [
-    "alfworld>=0.4.0",
-    "gymnasium>=0.29.0",
     "claude-agent-sdk>=0.1.0",
 ]
 

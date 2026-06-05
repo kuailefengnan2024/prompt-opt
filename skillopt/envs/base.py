@@ -1,10 +1,8 @@
-"""ReflACT environment adapter — abstract interface.
+"""【功能描述】ReflACT 环境适配器抽象接口：接入新 benchmark/模拟器时实现 `EnvAdapter` 子类。
+【输入】扁平化 `cfg`、批次 `BatchSpec`、当前 skill 文档、rollout 输出等。
+【输出】环境管理器、rollout 结果 dict 列表、Reflect 阶段 `RawPatch` 列表及任务类型名。
 
-To connect ReflACT to a new environment (benchmark, simulator, etc.),
-implement a subclass of :class:`EnvAdapter` with environment-specific
-rollout and reflection logic.
-
-Example::
+接入新环境示例::
 
     class MyBenchAdapter(EnvAdapter):
         def build_train_env(self, batch_size, seed, **kw):
@@ -14,11 +12,11 @@ Example::
             return MyEnvManager(split=split, n=env_num, seed=seed)
 
         def rollout(self, env_manager, skill_content, out_dir, **kw):
-            # Run episodes, return [{"id": ..., "hard": 0/1, "soft": 0.0-1.0, ...}]
+            # 运行 episode，返回 [{"id": ..., "hard": 0/1, "soft": 0.0-1.0, ...}]
             ...
 
         def reflect(self, results, skill_content, out_dir, **kw):
-            # Analyze trajectories, return list of patch dicts
+            # 分析轨迹，返回 patch dict 列表
             ...
 
         def get_task_types(self):
@@ -35,36 +33,34 @@ from skillopt.prompts import load_prompt
 
 
 class EnvAdapter(ABC):
-    """Abstract adapter for connecting ReflACT to any environment.
+    """将 ReflACT 接入任意环境的抽象适配器。
 
-    Subclasses must implement all abstract methods. The ReflACT trainer
-    calls these methods at the appropriate pipeline stages.
+    子类必须实现全部抽象方法；ReflACT trainer 在流水线各阶段调用它们。
     """
 
-    # ── Lifecycle hooks ────────────────────────────────────────────────────
+    # ── 生命周期钩子 ────────────────────────────────────────────────────────
 
     def setup(self, cfg: dict) -> None:
-        """Called once by the trainer before the training loop begins.
+        """trainer 在训练循环开始前调用一次。
 
-        Override to perform one-time initialization that requires the full
-        config (e.g., data loading, split creation).  Default is a no-op.
+        可覆盖以做需要完整配置的一次性初始化（如数据加载、划分创建）。默认为空操作。
         """
         self._cfg = dict(cfg)
 
     def get_dataloader(self) -> BaseDataLoader | None:
-        """Return the task dataloader used by this adapter, if any."""
+        """返回本适配器使用的任务 dataloader（若有）。"""
         return None
 
     def requires_ray(self) -> bool:
-        """Return whether this adapter requires Ray runtime initialization."""
+        """返回本适配器是否需要初始化 Ray 运行时。"""
         return False
 
     def build_reference_text(self, item: dict) -> str:
-        """Return hidden reference material for reflection, if any."""
+        """返回用于反思的隐藏参考材料（若有）。"""
         return str(item.get("reference_text") or "").strip()
 
     def get_reference_metadata(self, item: dict) -> dict:
-        """Return structured metadata about hidden reference material."""
+        """返回隐藏参考材料的结构化元数据。"""
         reference_text = self.build_reference_text(item)
         if not reference_text:
             return {"fields": [], "preview": ""}
@@ -78,7 +74,7 @@ class EnvAdapter(ABC):
         results: list[dict],
         items: list[dict] | None,
     ) -> list[dict]:
-        """Attach environment-specific hidden reference text to result dicts."""
+        """将环境专有的隐藏参考文本附加到结果 dict 上。"""
         if not results or not items:
             return list(results)
 
@@ -107,7 +103,7 @@ class EnvAdapter(ABC):
         n_successes: int,
         seed: int | None = None,
     ) -> list[dict]:
-        """Select a small diverse subset of current-batch items by outcome."""
+        """按成败从当前批次中选取少量多样化代表条目。"""
         if not items:
             return []
 
@@ -169,11 +165,10 @@ class EnvAdapter(ABC):
         return selected
 
     def build_env_from_batch(self, batch: BatchSpec, **kwargs):
-        """Build an environment manager or item list from a :class:`BatchSpec`.
+        """从 :class:`BatchSpec` 构建环境管理器或条目列表。
 
-        Default behavior preserves the legacy adapter API by routing training
-        batches through :meth:`build_train_env` and evaluation batches through
-        :meth:`build_eval_env`.
+        默认行为保持 legacy 适配器 API：train 批次走 :meth:`build_train_env`，
+        eval 批次走 :meth:`build_eval_env`。
         """
         if batch.phase == "train":
             return self.build_train_env(batch_size=batch.batch_size, seed=batch.seed, **kwargs)
@@ -186,31 +181,31 @@ class EnvAdapter(ABC):
 
     @abstractmethod
     def build_train_env(self, batch_size: int, seed: int, **kwargs):
-        """Build a training environment manager.
+        """构建训练用环境管理器。
 
         Returns
         -------
         object
-            An environment manager that can be passed to :meth:`rollout`.
+            可传入 :meth:`rollout` 的环境管理器。
         """
 
     @abstractmethod
     def build_eval_env(self, env_num: int, split: str, seed: int, **kwargs):
-        """Build an evaluation environment manager.
+        """构建评估用环境管理器。
 
         Parameters
         ----------
         env_num : int
-            Number of evaluation environments.
+            评估环境数量。
         split : str
-            Dataset split (e.g. ``"valid_seen"``, ``"valid_unseen"``).
+            数据集划分（如 ``"valid_seen"``、``"valid_unseen"``）。
         seed : int
-            Random seed for reproducibility.
+            可复现的随机种子。
 
         Returns
         -------
         object
-            An environment manager that can be passed to :meth:`rollout`.
+            可传入 :meth:`rollout` 的环境管理器。
         """
 
     @abstractmethod
@@ -221,14 +216,14 @@ class EnvAdapter(ABC):
         out_dir: str,
         **kwargs,
     ) -> list[dict]:
-        """Run a batch of episodes using the current skill.
+        """使用当前 skill 运行一批 episode。
 
         Returns
         -------
         list[dict]
-            Each dict conforms to :class:`~skillopt.types.RolloutResult`:
-            must have ``"id"`` (str), ``"hard"`` (0/1), ``"soft"``
-            (float 0-1). May include env-specific fields.
+            每个 dict 符合 :class:`~skillopt.types.RolloutResult`：
+            须含 ``"id"`` (str)、``"hard"`` (0/1)、``"soft"`` (float 0-1)；
+            可含环境专有字段。
         """
 
     @abstractmethod
@@ -239,36 +234,36 @@ class EnvAdapter(ABC):
         out_dir: str,
         **kwargs,
     ) -> list[dict | None]:
-        """Analyze rollout results and produce patches.
+        """分析 rollout 结果并生成 patch。
 
-        Each returned dict conforms to :class:`~skillopt.types.RawPatch`:
-        ``"patch"`` (with ``"edits"`` list) + ``"source_type"``
-        (``"failure"`` or ``"success"``).
+        每个返回 dict 符合 :class:`~skillopt.types.RawPatch`：
+        ``"patch"``（含 ``"edits"`` 列表）+ ``"source_type"``
+        （``"failure"`` 或 ``"success"``）。
 
         Returns
         -------
         list[dict | None]
-            Raw analyst outputs; ``None`` entries are filtered out.
+            原始分析师输出；``None`` 条目会被过滤。
         """
 
     @abstractmethod
     def get_task_types(self) -> list[str]:
-        """Return the list of task type names for this environment."""
+        """返回本环境的任务类型名称列表。"""
 
-    # ── Prompt configuration (two-level priority) ────────────────────────
+    # ── 提示词配置（两级优先级）────────────────────────────────────────────
     #
-    # Priority: env-specific prompt file  >  generic default prompt file.
+    # 优先级：环境专属提示词文件 > 通用默认提示词文件。
     #
-    # Prompts are loaded from ``.md`` files via ``load_prompt(name, env)``:
-    #   1. ``skillopt/envs/<env>/prompts/<name>.md``  (env-specific)
-    #   2. ``skillopt/prompts/<name>.md``             (generic fallback)
+    # 通过 ``load_prompt(name, env)`` 从 ``.md`` 加载：
+    #   1. ``skillopt/envs/<env>/prompts/<name>.md``  （环境专属）
+    #   2. ``skillopt/prompts/<name>.md``             （通用回退）
     #
-    # Subclasses can still override ``get_*_prompt()`` for full control.
+    # 子类仍可覆盖 ``get_*_prompt()`` 以完全自定义。
 
     @property
     def _env_name(self) -> str:
-        """Derive the env directory name from this adapter's module path."""
-        # e.g. "skillopt.envs.searchqa.adapter" → "searchqa"
+        """从本适配器模块路径推导 env 目录名。"""
+        # 例: "skillopt.envs.searchqa.adapter" → "searchqa"
         module = type(self).__module__
         parts = module.split(".")
         if len(parts) >= 3 and parts[-3] == "envs":
@@ -276,7 +271,7 @@ class EnvAdapter(ABC):
         return ""
 
     def _load_env_prompt(self, name: str) -> str | None:
-        """Load a prompt with env-specific override. Returns None if not found."""
+        """加载带环境覆盖的提示词；未找到时返回 None。"""
         try:
             return load_prompt(name, env=self._env_name)
         except FileNotFoundError:

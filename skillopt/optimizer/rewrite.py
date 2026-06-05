@@ -1,4 +1,9 @@
-"""Optimizer-driven full skill rewrite from selected revise_suggestions."""
+"""【功能描述】由优化器驱动的完整 skill 重写，基于选中的 revise_suggestions 生成新 skill 文档。
+
+【输入】skill_content、patch（含 suggestions）、可选 system_prompt、step_buffer_context、env 等。
+
+【输出】含 new_skill 与 change_summary 的结果 dict，失败时返回 None。
+"""
 from __future__ import annotations
 
 import json

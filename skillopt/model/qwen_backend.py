@@ -1,4 +1,8 @@
-"""OpenAI-compatible Qwen chat backend for the target path."""
+"""
+【功能描述】目标路径的 OpenAI 兼容 Qwen 对话后端。
+【输入】消息列表、QWEN_CHAT_* 环境变量与 configure_qwen_chat 参数。
+【输出】模型文本或 CompatAssistantMessage、HTTP 用量字典、token 汇总。
+"""
 from __future__ import annotations
 
 import json

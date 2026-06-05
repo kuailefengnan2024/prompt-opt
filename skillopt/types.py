@@ -1,13 +1,11 @@
-"""Standardized I/O types for the ReflACT pipeline.
+"""【功能描述】ReflACT 流水线标准化 I/O 类型：六阶段逐步流水线与两个 epoch 级阶段的共享 dataclass。
+【输入】各阶段的 dict 表示（经 `from_dict` 解析）。
+【输出】类型安全的 dataclass 及 `to_dict` 往返序列化；再导出 `GateResult`、`GateAction`、`BatchSpec`。
 
-Shared dataclass definitions for the 6-stage per-step pipeline
-and the 2 epoch-level stages.  All types support round-trip
-conversion to/from plain dicts for incremental adoption.
-
-Re-exports
+再导出
 ----------
-GateResult, GateAction — from skillopt.evaluation.gate
-BatchSpec              — from skillopt.datasets.base
+GateResult, GateAction — 来自 skillopt.evaluation.gate
+BatchSpec              — 来自 skillopt.datasets.base
 """
 from __future__ import annotations
 
@@ -18,16 +16,16 @@ from skillopt.evaluation.gate import GateAction, GateResult  # noqa: F401
 from skillopt.datasets.base import BatchSpec  # noqa: F401
 
 
-# ── Atomic types ─────────────────────────────────────────────────────────
+# ── 原子类型 ─────────────────────────────────────────────────────────
 
 EditOp = Literal["append", "insert_after", "replace", "delete"]
 
 
 @dataclass
 class Edit:
-    """A single edit operation on a skill document.
+    """对 skill 文档的单条编辑操作。
 
-    Used across Reflect → Aggregate → Select → Update → MetaReflect.
+    用于 Reflect → Aggregate → Select → Update → MetaReflect 各阶段。
     """
 
     op: EditOp
@@ -71,9 +69,9 @@ class Edit:
 
 @dataclass
 class Patch:
-    """A set of edits with reasoning.
+    """带推理说明的一组 edits。
 
-    Output of Aggregate (③), Select (④); input to Update (⑤).
+    Aggregate（③）与 Select（④）的输出；Update（⑤）的输入。
     """
 
     edits: list[Edit] = field(default_factory=list)
@@ -99,13 +97,13 @@ class Patch:
         return d
 
 
-# ── Stage ① ROLLOUT ──────────────────────────────────────────────────────
+# ── 阶段 ① ROLLOUT ──────────────────────────────────────────────────────
 
 @dataclass
 class RolloutResult:
-    """Result of a single episode/task rollout.
+    """单条 episode/任务 rollout 的结果。
 
-    Universal fields are required; env-specific fields live in ``extras``.
+    通用字段为必填；环境专有字段存放在 ``extras`` 中。
     """
 
     id: str
@@ -176,11 +174,11 @@ class RolloutResult:
         return d
 
 
-# ── Stage ② REFLECT ──────────────────────────────────────────────────────
+# ── 阶段 ② REFLECT ──────────────────────────────────────────────────────
 
 @dataclass
 class FailureSummaryEntry:
-    """One entry in the failure summary produced by error analysts."""
+    """错误分析师生成的失败摘要中的单条条目。"""
 
     failure_type: str
     count: int = 0
@@ -204,10 +202,10 @@ class FailureSummaryEntry:
 
 @dataclass
 class RawPatch:
-    """Analyst output from the Reflect stage — a patch with provenance.
+    """Reflect 阶段的分析师输出 — 带来源信息的 patch。
 
-    Wraps the dict produced by ``run_error_analyst_minibatch``
-    and ``run_success_analyst_minibatch``.
+    封装 ``run_error_analyst_minibatch`` 与
+    ``run_success_analyst_minibatch`` 产生的 dict。
     """
 
     patch: Patch
@@ -244,11 +242,11 @@ class RawPatch:
         return d
 
 
-# ── Epoch-level: SLOW_UPDATE ─────────────────────────────────────────────
+# ── Epoch 级：SLOW_UPDATE ─────────────────────────────────────────────
 
 @dataclass
 class SlowUpdateResult:
-    """Output of the epoch-level slow update stage (EMA / regularization)."""
+    """Epoch 级 slow update 阶段（EMA / 正则化）的输出。"""
 
     reasoning: str = ""
     slow_update_content: str = ""

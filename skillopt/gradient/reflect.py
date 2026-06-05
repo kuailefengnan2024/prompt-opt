@@ -1,23 +1,21 @@
-"""ReflACT core Reflect engine -- minibatch trajectory analysis.
+"""【功能描述】ReflACT 核心 Reflect 引擎 — minibatch trajectory 分析；提供与环境无关的 minibatch trajectory 分析：将 trajectory 分组为大小 M 的 minibatch 一并分析，类比神经网络训练中的 minibatch SGD 与逐样本 SGD。
 
-Provides environment-agnostic minibatch trajectory analysis: instead of
-analyzing each trajectory independently, trajectories are grouped into
-minibatches of size M and analyzed together -- analogous to minibatch SGD
-vs per-sample SGD in neural network training.
+【输入】results、skill_content、prediction_dir、patches_dir、minibatch 与 edit 预算等配置。
 
-Two-level prompt priority system:
+【输出】fmt_trajectory 等格式化函数；run_minibatch_reflect 返回含 source_type 的 patch dict 列表。
 
-1. **Custom prompt** (adapter returns non-None) -- used as-is.
-2. **Generic default prompt** (adapter returns None) -- built-in defaults
-   that work for any environment without configuration.
+两级 prompt 优先级：
 
-Public API
-----------
-- :func:`fmt_trajectory`               -- format one conversation into text
-- :func:`fmt_minibatch_trajectories`   -- format multiple trajectories for batch analysis
-- :func:`run_error_analyst_minibatch`   -- one optimizer call for a group of failures
-- :func:`run_success_analyst_minibatch` -- one optimizer call for a group of successes
-- :func:`run_minibatch_reflect`         -- full reflect stage dispatcher
+1. **自定义 prompt**（adapter 返回非 None）— 原样使用。
+2. **通用默认 prompt**（adapter 返回 None）— 内置默认，无需配置即可适配任意环境。
+
+公共 API
+--------
+- :func:`fmt_trajectory`               — 将单条 conversation 格式化为文本
+- :func:`fmt_minibatch_trajectories`   — 格式化多条 trajectory 供 batch 分析
+- :func:`run_error_analyst_minibatch`   — 对一组失败 trajectory 单次 optimizer 调用
+- :func:`run_success_analyst_minibatch` — 对一组成功 trajectory 单次 optimizer 调用
+- :func:`run_minibatch_reflect`         — 完整 reflect 阶段调度器
 """
 from __future__ import annotations
 
@@ -41,13 +39,13 @@ from skillopt.prompts import load_prompt
 from skillopt.utils import extract_json
 
 
-# ── Trajectory formatting ────────────────────────────────────────────────────
+# ── Trajectory 格式化 ────────────────────────────────────────────────────
 
 _MAX_TRAJ_CHARS = 12_000
 
 
 def _clip_text(value, limit: int) -> str:
-    """Render optional trajectory fields safely before truncation."""
+    """截断前安全渲染可选 trajectory 字段。"""
     if value is None:
         return ""
     return str(value)[:limit]
@@ -57,14 +55,14 @@ def fmt_trajectory(
     conversation: list[dict],
     max_chars: int = _MAX_TRAJ_CHARS,
 ) -> str:
-    """Format a conversation list into analyst-readable text.
+    """将 conversation 列表格式化为 analyst 可读文本。
 
-    Accepts two common formats:
+    支持两种常见格式：
 
-    1. Tool-call records:   ``{"type": "tool_call", "cmd": ..., "obs": ...}``
-    2. Step records:        ``{"step": N, "action": ..., "env_feedback": ..., "reasoning": ...}``
+    1. 工具调用记录：   ``{"type": "tool_call", "cmd": ..., "obs": ...}``
+    2. 步骤记录：        ``{"step": N, "action": ..., "env_feedback": ..., "reasoning": ...}``
 
-    Any other dict is rendered via its ``"content"`` key.
+    其他 dict 通过 ``"content"`` 键渲染。
     """
     lines: list[str] = []
     for item in conversation:
@@ -86,7 +84,7 @@ def fmt_trajectory(
             lines.append(f"[step {step} action] {action}")
             lines.append(f"[step {step} obs]    {feedback}")
         elif item.get("role") == "system":
-            # Post-execution verification / enrichment info
+            # 执行后验证 / enrichment 信息
             msg = _clip_text(item.get("content"), 2000)
             lines.append(f"[verification] {msg}")
         else:
@@ -102,34 +100,33 @@ def fmt_trajectory(
     return text
 
 
-# ── Minibatch trajectory formatting ──────────────────────────────────────────
+# ── Minibatch trajectory 格式化 ──────────────────────────────────────────
 
 
 def fmt_minibatch_trajectories(
     items: list[dict],
     prediction_dir: str,
 ) -> str:
-    """Format multiple trajectories for minibatch analyst consumption.
+    """格式化多条 trajectory 供 minibatch analyst 消费。
 
-    Each item is a rollout result dict with ``"id"``, ``"task_description"``,
-    ``"task_type"``, ``"fail_reason"``, etc.  Reads ``conversation.json``
-    for each and formats them together with trajectory headers.
+    每个 item 为含 ``"id"``、``"task_description"``、``"task_type"``、
+    ``"fail_reason"`` 等的 rollout 结果 dict。为每个 item 读取 ``conversation.json``
+    并连同 trajectory 头一并格式化。
 
-    If available, includes the spreadsheet preview and target system prompt
-    so the analyst can see what the agent saw.
+    若可用，包含 spreadsheet preview 与 target system prompt，
+    以便 analyst 看到 agent 所见内容。
 
     Parameters
     ----------
     items : list[dict]
-        Rollout result dicts belonging to one minibatch.
+        属于同一 minibatch 的 rollout 结果 dict 列表。
     prediction_dir : str
-        Path to ``predictions/`` directory containing per-task
-        ``<task_id>/conversation.json`` files.
+        含 ``predictions/`` 目录的路径，其中有 ``<task_id>/conversation.json``。
 
     Returns
     -------
     str
-        Formatted text with all trajectories separated by ``---``.
+        所有 trajectory 以 ``---`` 分隔的格式化文本。
     """
     parts: list[str] = []
     for idx, item in enumerate(items, 1):
@@ -160,7 +157,7 @@ def fmt_minibatch_trajectories(
                 f"{reference_text[:4000]}\n"
             )
 
-        # ── Append target context (what the agent saw) ──────────────
+        # ── 追加 target 上下文（agent 所见） ──────────────
         target_prompt = item.get("target_system_prompt", "")
         if not target_prompt:
             prompt_path = os.path.join(prediction_dir, tid, "target_system_prompt.txt")
@@ -222,11 +219,11 @@ def fmt_minibatch_trajectories(
     return "\n\n---\n\n".join(parts)
 
 
-# ── Prompt resolution ───────────────────────────────────────────────────────
+# ── Prompt 解析 ───────────────────────────────────────────────────────
 
 
 def _resolve_prompt(custom: str | None, default_name: str, update_mode: str = "patch") -> str:
-    """Return *custom* if provided (non-None), otherwise load from file."""
+    """若提供了 *custom*（非 None）则返回，否则从文件加载。"""
     if custom is not None:
         return custom
     mode = normalize_update_mode(update_mode)
@@ -246,7 +243,7 @@ def _resolve_prompt(custom: str | None, default_name: str, update_mode: str = "p
     return load_prompt(actual_name)
 
 
-# ── Minibatch analysts ──────────────────────────────────────────────────────
+# ── Minibatch analyst ──────────────────────────────────────────────────────
 
 
 def run_error_analyst_minibatch(
@@ -262,31 +259,31 @@ def run_error_analyst_minibatch(
     meta_skill_context: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
-    """Analyze a minibatch of failed trajectories in one optimizer call.
+    """单次 optimizer 调用分析一组失败 trajectory 的 minibatch。
 
     Parameters
     ----------
     skill_content : str
-        Current skill document text.
+        当前 skill 文档文本。
     items : list[dict]
-        Rollout result dicts (all should have ``hard=0``).
+        Rollout 结果 dict（均应 ``hard=0``）。
     prediction_dir : str
-        Path to ``predictions/`` directory.
+        ``predictions/`` 目录路径。
     edit_budget : int
-        Maximum number of edits (L).
+        最大编辑数（L）。
     system_prompt : str | None
-        Custom system prompt. ``None`` = use generic default.
+        自定义 system prompt。``None`` = 使用通用默认。
     rejection_context : str
-        *Deprecated* — use ``step_buffer_context``.
+        *已弃用* — 请使用 ``step_buffer_context``。
     trajectory_memory_context : str
-        *Deprecated* — use ``step_buffer_context``.
+        *已弃用* — 请使用 ``step_buffer_context``。
     step_buffer_context : str
-        Unified summary of previous steps (failure patterns + rejected edits).
+        先前步骤的统一摘要（失败模式 + 被拒绝的编辑）。
 
     Returns
     -------
     dict | None
-        Patch dict with ``source_type="failure"``, or ``None`` on error.
+        含 ``source_type="failure"`` 的 patch dict，出错时 ``None``。
     """
     mode = normalize_update_mode(update_mode)
     actual_system = _resolve_prompt(system_prompt, "analyst_error", mode)
@@ -309,7 +306,7 @@ def run_error_analyst_minibatch(
             f"## {payload_label(mode, title=True)} Budget\n"
             f"Produce at most L={edit_budget} {payload_label(mode)}.\n\n"
         )
-    # Unified step buffer context (preferred)
+    # 统一的 step buffer 上下文（首选）
     ctx = step_buffer_context or rejection_context or ""
     if trajectory_memory_context:
         ctx = f"{ctx}\n{trajectory_memory_context}" if ctx else trajectory_memory_context
@@ -350,21 +347,21 @@ def run_success_analyst_minibatch(
     meta_skill_context: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
-    """Analyze a minibatch of successful trajectories in one optimizer call.
+    """单次 optimizer 调用分析一组成功 trajectory 的 minibatch。
 
     Parameters
     ----------
     system_prompt : str | None
-        Custom system prompt. ``None`` = use generic default.
+        自定义 system prompt。``None`` = 使用通用默认。
     trajectory_memory_context : str
-        *Deprecated* — use ``step_buffer_context``.
+        *已弃用* — 请使用 ``step_buffer_context``。
     step_buffer_context : str
-        Unified summary of previous steps (failure patterns + rejected edits).
+        先前步骤的统一摘要（失败模式 + 被拒绝的编辑）。
 
     Returns
     -------
     dict | None
-        Patch dict with ``source_type="success"``, or ``None`` on error.
+        含 ``source_type="success"`` 的 patch dict，出错时 ``None``。
     """
     mode = normalize_update_mode(update_mode)
     actual_system = _resolve_prompt(system_prompt, "analyst_success", mode)
@@ -413,20 +410,19 @@ def run_success_analyst_minibatch(
     return None
 
 
-# ── Minibatch reflect dispatcher ────────────────────────────────────────────
+# ── Minibatch reflect 调度器 ────────────────────────────────────────────
 
 
 def _split_minibatches(items: list, batch_size: int) -> list[list]:
-    """Split items into minibatches of at most *batch_size*."""
+    """将 items 拆分为最多 *batch_size* 个一组的 minibatch。"""
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
 def _shuffle_for_minibatch(items: list, seed: int | None) -> list:
-    """Return items in minibatch order.
+    """返回 minibatch 顺序下的 items。
 
-    Uses a deterministic shuffle when a seed is provided so resume runs keep
-    the same minibatch composition. Falls back to input order when no seed is
-    available.
+    提供 seed 时使用确定性 shuffle，使 resume 运行保持相同 minibatch 组成。
+    无 seed 时回退为输入顺序。
     """
     ordered = list(items)
     if seed is None:
@@ -454,49 +450,49 @@ def run_minibatch_reflect(
     meta_skill_context: str = "",
     update_mode: str = "patch",
 ) -> list[dict | None]:
-    """Full minibatch reflect stage: group → parallel optimizer calls → patches.
+    """完整 minibatch reflect 阶段：分组 → 并行 optimizer 调用 → patch。
 
-    Separates failure and success trajectories, splits each into minibatches
-    of size M, runs all minibatches in parallel, and saves patch files.
+    分离失败与成功 trajectory，各按大小 M 拆成 minibatch，
+    并行运行所有 minibatch 并保存 patch 文件。
 
     Parameters
     ----------
     results : list[dict]
-        Rollout result dicts; see :class:`~skillopt.types.RolloutResult`.
+        Rollout 结果 dict；见 :class:`~skillopt.types.RolloutResult`。
     skill_content : str
-        Current skill document.
+        当前 skill 文档。
     prediction_dir : str
-        Path to ``predictions/`` with ``conversation.json`` files.
+        含 ``conversation.json`` 的 ``predictions/`` 路径。
     patches_dir : str
-        Path to save per-minibatch patch JSON files.
+        保存逐 minibatch patch JSON 的路径。
     workers : int
-        Max parallel optimizer calls.
+        最大并行 optimizer 调用数。
     failure_only : bool
-        If True, skip success trajectories.
+        为 True 时跳过成功 trajectory。
     minibatch_size : int
-        Trajectories per group (M).
+        每组 trajectory 数（M）。
     edit_budget : int
-        Max edits per minibatch (L).
+        每个 minibatch 最大编辑数（L）。
     random_seed : int | None
-        Optional seed used to shuffle trajectories before minibatch splitting.
+        可选 seed，在 minibatch 拆分前 shuffle trajectory。
     error_system, success_system : str | None
-        Optional custom prompts. ``None`` = use generic defaults.
+        可选自定义 prompt。``None`` = 使用通用默认。
 
     Returns
     -------
     list[dict | None]
-        Patch dicts (with ``source_type`` "failure" or "success").
+        含 ``source_type`` "failure" 或 "success" 的 patch dict 列表。
     """
     os.makedirs(patches_dir, exist_ok=True)
 
-    # Separate failure / success
+    # 分离失败 / 成功
     failures = [r for r in results if not r.get("hard")]
     successes = [r for r in results if r.get("hard")] if not failure_only else []
 
     failures = _shuffle_for_minibatch(failures, random_seed)
     successes = _shuffle_for_minibatch(successes, None if random_seed is None else random_seed + 1)
 
-    # Split into minibatches
+    # 拆成 minibatch
     fail_batches = _split_minibatches(failures, minibatch_size)
     succ_batches = _split_minibatches(successes, minibatch_size)
 
@@ -511,7 +507,7 @@ def run_minibatch_reflect(
 
     raw_patches: list[dict | None] = []
 
-    # Resume support: check for already-done minibatch patches
+    # Resume 支持：检查已完成的 minibatch patch
     pending_fail: list[tuple[int, list[dict]]] = []
     for idx, batch in enumerate(fail_batches):
         path = os.path.join(patches_dir, f"minibatch_fail_{idx:03d}.json")
@@ -530,14 +526,14 @@ def run_minibatch_reflect(
         else:
             pending_succ.append((idx, batch))
 
-    # ── Worker functions ──────────────────────────────────────────────────
+    # ── Worker 函数 ──────────────────────────────────────────────────
     def _do_fail(idx: int, batch: list[dict]) -> tuple[str, dict | None]:
         patch = run_error_analyst_minibatch(
             skill_content, batch, prediction_dir,
             edit_budget=edit_budget,
             system_prompt=error_system,
             step_buffer_context=step_buffer_context,
-            # backward compat fallback
+            # 向后兼容回退
             rejection_context=rejection_context,
             trajectory_memory_context=trajectory_memory_context,
             meta_skill_context=meta_skill_context,
@@ -557,7 +553,7 @@ def run_minibatch_reflect(
         )
         return f"minibatch_succ_{idx:03d}", patch
 
-    # Run all pending minibatches in parallel
+    # 并行运行所有待处理 minibatch
     all_pending = (
         [("fail", idx, batch) for idx, batch in pending_fail]
         + [("succ", idx, batch) for idx, batch in pending_succ]

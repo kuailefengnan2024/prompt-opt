@@ -1,7 +1,7 @@
-"""ReflACT Model backend — Azure OpenAI wrapper with token tracking.
-
-Provides optimizer/target dual-deployment chat functions and a global
-TokenTracker for per-stage cost accounting. Previously llm/azure_openai.py.
+"""
+【功能描述】ReflACT Azure OpenAI 模型后端，含 token 追踪；提供优化器/目标双部署对话与全局 TokenTracker。
+【输入】环境变量 AZURE_OPENAI_*、OPTIMIZER/TARGET 端点与密钥、chat 消息与部署名。
+【输出】模型文本或消息对象、用量字典、按 stage 汇总的 token 统计。原 llm/azure_openai.py。
 """
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from types import SimpleNamespace
 from typing import Any
 from openai import AzureOpenAI, OpenAI
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── 配置 ─────────────────────────────────────────────────────────────────────
 
 ENDPOINT = os.environ.get(
     "AZURE_OPENAI_ENDPOINT",
-    "",  # Set via env var or config: e.g. "https://your-resource.openai.azure.com/"
+    "",  # 通过环境变量或配置设置，例如 "https://your-resource.openai.azure.com/"
 )
 API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 API_KEY = os.environ.get(
@@ -103,17 +103,17 @@ REASONING_EFFORT: str | None = None
 
 _AZ_CLI_TOKEN_CACHE: dict[str, dict[str, Any]] = {}
 
-# Deployments that require Responses API
+# 需使用 Responses API 的部署
 _RESPONSES_API_MODELS = {
     "gpt-5.3-codex", "gpt-5.1-codex", "gpt-5.2-codex",
     "gpt-5-codex", "codex-mini", "gpt-5.4-pro",
 }
 
 
-# ── Token Tracker ─────────────────────────────────────────────────────────────
+# ── Token 追踪 ───────────────────────────────────────────────────────────────
 
 class TokenTracker:
-    """Thread-safe per-stage token counter."""
+    """线程安全的按 stage 计数的 token 统计器。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -161,7 +161,7 @@ class TokenTracker:
             self._data.clear()
 
     def stage_snapshot(self, stage: str) -> dict:
-        """Return a copy of one stage's counters (or zeros if not tracked yet)."""
+        """返回某一 stage 计数器的副本（尚未追踪时为零）。"""
         with self._lock:
             d = self._data.get(stage, {})
             return {
@@ -175,7 +175,7 @@ class TokenTracker:
 tracker = TokenTracker()
 
 
-# ── Client management ─────────────────────────────────────────────────────────
+# ── 客户端管理 ───────────────────────────────────────────────────────────────
 
 _optimizer_client: AzureOpenAI | None = None
 _target_client: AzureOpenAI | None = None
@@ -239,11 +239,9 @@ def _make_token_provider(
 
 
 def _make_azure_cli_token_provider(ad_scope: str):
-    """Return an Azure CLI token provider compatible with AzureOpenAI.
+    """返回与 AzureOpenAI 兼容的 Azure CLI token 提供器。
 
-    This fallback avoids requiring azure-identity in environments where `az`
-    is already logged in. The SDK calls this provider whenever it needs a
-    bearer token.
+    在已登录 `az` 的环境中无需 azure-identity；SDK 需要 bearer token 时会调用此提供器。
     """
 
     resource = ad_scope.removesuffix("/.default")
@@ -321,7 +319,7 @@ def get_target_client() -> AzureOpenAI | OpenAI:
     global _target_client
     with _target_lock:
         if _target_client is None:
-            # When using qwen_chat backend, return an OpenAI client pointing to vLLM
+            # 使用 qwen_chat 后端时，返回指向 vLLM 的 OpenAI 客户端
             from skillopt.model.backend_config import get_target_backend
             if get_target_backend() == "qwen_chat":
                 from skillopt.model import qwen_backend as _qwen
@@ -339,7 +337,7 @@ def _needs_responses_api(deployment: str) -> bool:
     return any(dep == m or dep.startswith(m + "-") for m in _RESPONSES_API_MODELS)
 
 
-# ── Core chat function ────────────────────────────────────────────────────────
+# ── 核心对话函数 ──────────────────────────────────────────────────────────────
 
 def _chat_impl(
     client: AzureOpenAI,
@@ -352,7 +350,7 @@ def _chat_impl(
     reasoning_effort: str | None = None,
     timeout: int | None = None,
 ) -> tuple[str, dict]:
-    """Call LLM, track tokens, return (text, usage_dict)."""
+    """调用 LLM，记录 token，返回 (text, usage_dict)。"""
     last_err = None
     usage_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -438,7 +436,7 @@ def _chat_messages_impl(
     return_message: bool = False,
     timeout: int | None = None,
 ) -> tuple[Any, dict]:
-    """Call the model with a pre-built message list."""
+    """使用预构建的消息列表调用模型。"""
     last_err = None
     usage_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -484,7 +482,7 @@ def _chat_messages_impl(
                     kwargs["tools"] = tools
                     if tool_choice is not None:
                         kwargs["tool_choice"] = tool_choice
-                    # Some models (e.g. gpt-5.5) don't support reasoning_effort with function tools
+                    # 部分模型（如 gpt-5.5）在 function tools 下不支持 reasoning_effort
                 elif actual_effort is not None:
                     kwargs["reasoning_effort"] = actual_effort
                 if timeout is not None:
@@ -513,7 +511,7 @@ def _chat_messages_impl(
 
 
 def _chat_tool_to_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
-    """Convert a Chat Completions function tool to Responses API format."""
+    """将 Chat Completions 的 function tool 转为 Responses API 格式。"""
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
         fn = tool["function"]
         return {
@@ -526,7 +524,7 @@ def _chat_tool_to_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
 
 
 def _messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
-    """Convert chat-style messages, including tool results, to Responses input."""
+    """将含 tool 结果的 chat 风格消息转为 Responses 输入。"""
     instructions: list[str] = []
     input_items: list[dict[str, Any]] = []
     for message in messages:
@@ -561,7 +559,7 @@ def _messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple[list[d
 
 
 def _responses_to_chat_message(resp: Any) -> tuple[Any, str]:
-    """Convert Responses output into the subset of Chat message API we use."""
+    """将 Responses 输出转为所用 Chat message API 子集。"""
     text = getattr(resp, "output_text", None) or ""
     tool_calls: list[dict[str, Any]] = []
     for item in getattr(resp, "output", None) or []:
@@ -583,7 +581,7 @@ def _responses_to_chat_message(resp: Any) -> tuple[Any, str]:
     return SimpleNamespace(content=text, tool_calls=tool_calls), text
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── 公开 API ──────────────────────────────────────────────────────────────────
 
 def configure_azure_openai(
     *,
@@ -710,7 +708,7 @@ def chat_optimizer(
     reasoning_effort: str | None = None,
     timeout: int | None = None,
 ) -> tuple[str, dict]:
-    """Call the optimizer model.  Returns (response_text, usage_dict)."""
+    """调用优化器模型，返回 (response_text, usage_dict)。"""
     return _chat_impl(
         get_optimizer_client(), OPTIMIZER_DEPLOYMENT,
         system, user, max_completion_tokens, retries, stage, reasoning_effort, timeout,
@@ -727,7 +725,7 @@ def chat_with_deployment(
     reasoning_effort: str | None = None,
     timeout: int | None = None,
 ) -> tuple[str, dict]:
-    """Call an arbitrary deployment using the shared Azure client."""
+    """使用共享 Azure 客户端调用任意部署。"""
     return _chat_impl(
         get_optimizer_client(),
         deployment,
@@ -750,7 +748,7 @@ def chat_target(
     reasoning_effort: str | None = None,
     timeout: int | None = None,
 ) -> tuple[str, dict]:
-    """Call the target model.  Returns (response_text, usage_dict)."""
+    """调用目标模型，返回 (response_text, usage_dict)。"""
     return _chat_impl(
         get_target_client(), TARGET_DEPLOYMENT,
         system, user, max_completion_tokens, retries, stage, reasoning_effort, timeout,
@@ -769,7 +767,7 @@ def chat_optimizer_messages(
     return_message: bool = False,
     timeout: int | None = None,
 ) -> tuple[Any, dict]:
-    """Call the optimizer model with a pre-built chat message list."""
+    """使用预构建的 chat 消息列表调用优化器模型。"""
     return _chat_messages_impl(
         get_optimizer_client(),
         OPTIMIZER_DEPLOYMENT,
@@ -798,7 +796,7 @@ def chat_messages_with_deployment(
     return_message: bool = False,
     timeout: int | None = None,
 ) -> tuple[Any, dict]:
-    """Call an arbitrary deployment with a pre-built chat message list."""
+    """使用预构建的 chat 消息列表调用任意部署。"""
     return _chat_messages_impl(
         get_optimizer_client(),
         deployment,
@@ -826,7 +824,7 @@ def chat_target_messages(
     return_message: bool = False,
     timeout: int | None = None,
 ) -> tuple[Any, dict]:
-    """Call the target model with a pre-built chat message list."""
+    """使用预构建的 chat 消息列表调用目标模型。"""
     return _chat_messages_impl(
         get_target_client(),
         TARGET_DEPLOYMENT,
@@ -843,7 +841,7 @@ def chat_target_messages(
 
 
 def get_token_summary() -> dict:
-    """Return per-stage and total token usage."""
+    """返回各 stage 及合计的 token 用量。"""
     return tracker.summary()
 
 
@@ -852,7 +850,7 @@ def reset_token_tracker() -> None:
 
 
 def set_target_deployment(deployment: str) -> None:
-    """Change target deployment at runtime."""
+    """运行时更改目标部署。"""
     global _target_client, TARGET_DEPLOYMENT
     TARGET_DEPLOYMENT = deployment
     os.environ["TARGET_DEPLOYMENT"] = deployment
@@ -868,18 +866,18 @@ def set_target_deployment(deployment: str) -> None:
 
 
 def set_reasoning_effort(effort: str | None) -> None:
-    """Set reasoning effort for all LLM calls. None = off."""
+    """为所有 LLM 调用设置 reasoning effort；None 表示关闭。"""
     global REASONING_EFFORT
     REASONING_EFFORT = effort if effort else None
 
 
 def get_reasoning_effort() -> str | None:
-    """Return the process-wide reasoning effort for direct Azure client users."""
+    """返回进程级 reasoning effort，供直接使用 Azure 客户端的代码读取。"""
     return REASONING_EFFORT
 
 
 def set_optimizer_deployment(deployment: str) -> None:
-    """Change optimizer deployment at runtime."""
+    """运行时更改优化器部署。"""
     global _optimizer_client, OPTIMIZER_DEPLOYMENT
     OPTIMIZER_DEPLOYMENT = deployment
     os.environ["OPTIMIZER_DEPLOYMENT"] = deployment

@@ -1,4 +1,8 @@
-"""Codex CLI backend for ReflACT."""
+"""
+【功能描述】ReflACT 的 Codex CLI 后端。
+【输入】消息列表、工具定义、模型部署名、环境变量（CODEX_CLI_BIN 等）。
+【输出】模型文本或 CompatAssistantMessage、按 stage 记录的 token 用量。
+"""
 from __future__ import annotations
 
 import base64

@@ -1,8 +1,8 @@
-"""ReflACT Engine -- the training runner.
+"""【功能描述】ReflACT Engine：训练运行器，类比 mmengine 的 Runner，编排完整训练流水线。
+【输入】扁平化配置 `cfg`、环境 `EnvAdapter`、数据加载器等。
+【输出】`ReflACTTrainer` 类（rollout、梯度、聚合、优化、评估各阶段）。
 
-Analogous to the Runner in mmengine: orchestrates the full training pipeline
-including rollout, gradient computation, aggregation, optimization, and
-evaluation.
+包含 rollout、梯度计算、聚合、优化与评估等阶段的编排逻辑。
 """
 from skillopt.engine.trainer import ReflACTTrainer  # noqa: F401
 

@@ -1,11 +1,8 @@
-"""Validation gate — accept / reject candidate skills.
+"""【功能描述】验证门（validation gate）：接受或拒绝候选 skill，类比 NN 训练中的验证早停与模型选择。
+【输入】候选 skill、候选 hard 分、当前/历史最优 skill 与分数及 `global_step`。
+【输出】不可变 `GateResult`（`accept_new_best` / `accept` / `reject` 及更新后的状态字段）。
 
-Analogous to validation-based early stopping and model selection in neural
-network training: compares the candidate's score against the current and
-best scores, then returns an accept/reject decision.
-
-The trainer owns side-effects (cache lookup, rollout, printing, state
-mutation).  This module is the pure decision function.
+比较候选分数与当前分、历史最优分后返回纯决策结果；trainer 负责副作用（缓存、rollout、打印、状态变更）。
 """
 from __future__ import annotations
 
@@ -18,7 +15,7 @@ GateAction = Literal["accept_new_best", "accept", "reject"]
 
 @dataclass(frozen=True)
 class GateResult:
-    """Immutable outcome of the validation gate."""
+    """验证门决策的不可变结果。"""
 
     action: GateAction
     current_skill: str
@@ -38,10 +35,9 @@ def evaluate_gate(
     best_step: int,
     global_step: int,
 ) -> GateResult:
-    """Pure gate decision: compare candidate score to current/best.
+    """纯门控决策：将候选分数与 current/best 比较。
 
-    Returns a *GateResult* with updated state; the caller decides what
-    to do with it (print, mutate trainer state, log, etc.).
+    返回带更新状态的 *GateResult*；由调用方决定后续动作（打印、变更 trainer 状态、日志等）。
     """
     if cand_hard > current_score:
         new_current_skill = candidate_skill

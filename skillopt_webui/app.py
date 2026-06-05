@@ -1,7 +1,8 @@
-"""
-SkillOpt WebUI — Configure, launch, and monitor training from your browser.
+"""【功能描述】SkillOpt Web 界面：在浏览器中配置、启动并监控训练。
+【输入】命令行参数（--port、--host、--share）、YAML 配置与超参覆盖。
+【输出】Gradio 服务与训练子进程日志/进度展示。
 
-Usage:
+用法:
     python -m skillopt_webui.app [--port PORT] [--share]
 """
 import argparse
@@ -21,10 +22,10 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-# ─── Config helpers ──────────────────────────────────────────────────────────
+# ─── 配置辅助 ──────────────────────────────────────────────────────────────
 
 def discover_configs() -> list[str]:
-    """Find all YAML configs under configs/."""
+    """在 configs/ 下查找所有 YAML 配置。"""
     pattern = str(PROJECT_ROOT / "configs" / "**" / "*.yaml")
     paths = sorted(glob.glob(pattern, recursive=True))
     return [os.path.relpath(p, PROJECT_ROOT) for p in paths
@@ -32,20 +33,20 @@ def discover_configs() -> list[str]:
 
 
 def load_config(path: str) -> dict:
-    """Load a YAML config file."""
+    """加载 YAML 配置文件。"""
     with open(PROJECT_ROOT / path) as f:
         return yaml.safe_load(f)
 
 
 def config_to_display(cfg: dict) -> str:
-    """Pretty-print config for display."""
+    """格式化配置供界面展示。"""
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False)
 
 
-# ─── Training process management ────────────────────────────────────────────
+# ─── 训练进程管理 ────────────────────────────────────────────────────────────
 
 class TrainingManager:
-    """Manages a single training subprocess."""
+    """管理单个训练子进程。"""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -77,7 +78,7 @@ class TrainingManager:
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-        # Auto-load API credentials from .secrets/*.env
+        # 从 .secrets/*.env 自动加载 API 凭证
         secrets_dir = PROJECT_ROOT / ".secrets"
         if secrets_dir.is_dir():
             for env_file in sorted(secrets_dir.glob("*.env")):
@@ -86,8 +87,8 @@ class TrainingManager:
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         env[k] = v
-        # Propagate OPTIMIZER_* to base AZURE_OPENAI_* when base is missing,
-        # so target/default endpoints inherit from optimizer config.
+        # 当基础 AZURE_OPENAI_* 缺失时，将 OPTIMIZER_* 传播过去，
+        # 使 target/默认端点继承 optimizer 配置。
         _propagate = [
             ("ENDPOINT", ""), ("API_VERSION", ""), ("AUTH_MODE", ""),
             ("MANAGED_IDENTITY_CLIENT_ID", ""), ("AD_SCOPE", ""),
@@ -108,7 +109,7 @@ class TrainingManager:
                 cwd=str(PROJECT_ROOT),
                 bufsize=1,
                 env=env,
-                start_new_session=True,  # create process group for clean kill
+                start_new_session=True,  # 创建进程组以便干净终止
             )
         except Exception as e:
             return f"❌ Failed to start training: {e}"
@@ -179,7 +180,7 @@ class TrainingManager:
         with self._lock:
             if self.process and self.running:
                 try:
-                    # Kill entire process group (children included)
+                    # 终止整个进程组（含子进程）
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 except (ProcessLookupError, OSError):
                     self.process.terminate()
@@ -194,67 +195,67 @@ class TrainingManager:
             return "".join(self.log_lines[-500:])
 
     def get_colored_logs_html(self) -> str:
-        """Render last 300 log lines with color-coded stages."""
+        """渲染最近 300 行日志，按阶段着色。"""
         import html as html_mod
         with self._lock:
             lines = list(self.log_lines[-300:])
         parts = []
         for line in lines:
-            # Rebrand: display "skillopt" instead of "reflact" in logs
+            # 品牌替换：日志中显示 skillopt 而非 reflact
             line_display = line.replace("reflact", "skillopt").replace("ReflACT", "SkillOpt").replace("Reflact", "Skillopt").replace("REFLACT", "SKILLOPT")
             escaped = html_mod.escape(line_display.rstrip("\n"))
             low = line.lower()
             if "[epoch" in low:
-                color = "#f59e0b"  # amber
+                color = "#f59e0b"  # 琥珀色
                 weight = "700"
             elif "[step" in low:
-                color = "#8b5cf6"  # purple
+                color = "#8b5cf6"  # 紫色
                 weight = "700"
             elif "rollout]" in low or "1/6" in low:
-                color = "#3b82f6"  # blue
+                color = "#3b82f6"  # 蓝色
             elif "reflect" in low or "2/6" in low:
-                color = "#f97316"  # orange
+                color = "#f97316"  # 橙色
             elif "aggregate" in low or "3/6" in low or "merge" in low:
-                color = "#06b6d4"  # cyan
+                color = "#06b6d4"  # 青色
             elif "select" in low or "4/6" in low:
-                color = "#ec4899"  # pink
+                color = "#ec4899"  # 粉色
             elif "update" in low or "5/6" in low:
-                color = "#10b981"  # green
+                color = "#10b981"  # 绿色
             elif "gate" in low or "6/6" in low:
-                color = "#ef4444"  # red
+                color = "#ef4444"  # 红色
             elif "slow update" in low:
-                color = "#f59e0b"  # amber
+                color = "#f59e0b"  # 琥珀色
                 weight = "700"
             elif "meta skill" in low:
-                color = "#a855f7"  # violet
+                color = "#a855f7"  # 紫罗兰色
                 weight = "700"
             elif "baseline" in low:
-                color = "#6366f1"  # indigo
+                color = "#6366f1"  # 靛蓝色
                 weight = "700"
             elif "[rollout]" in low:
-                # per-item rollout progress
+                # 单条 rollout 进度
                 if "hard=1" in line:
-                    color = "#22c55e"  # green for correct
+                    color = "#22c55e"  # 正确：绿色
                 elif "hard=0" in line:
-                    color = "#f87171"  # red for wrong
+                    color = "#f87171"  # 错误：红色
                 elif "timeout" in low:
-                    color = "#fbbf24"  # yellow for timeout
+                    color = "#fbbf24"  # 超时：黄色
                 else:
-                    color = "#94a3b8"  # gray
+                    color = "#94a3b8"  # 灰色
                 weight = "400"
             elif "error" in low or "fail" in low:
                 color = "#ef4444"
                 weight = "700"
             elif "========" in line:
-                color = "#64748b"  # separator
+                color = "#64748b"  # 分隔线
                 weight = "400"
             else:
-                color = "#e2e8f0"  # default light gray
+                color = "#e2e8f0"  # 默认浅灰
                 weight = "400"
             if "weight" not in dir():
                 weight = "400"
             parts.append(f'<span style="color:{color};font-weight:{weight}">{escaped}</span>')
-            weight = "400"  # reset
+            weight = "400"  # 重置
 
         log_html = "<br>".join(parts) if parts else '<span style="color:#94a3b8">No logs yet. Click Refresh after launching training.</span>'
         return f'''<div id="log-container" style="
@@ -264,7 +265,7 @@ class TrainingManager:
             box-shadow:inset 0 2px 4px rgba(0,0,0,0.3);">{log_html}</div>'''
 
     def get_progress_html(self) -> str:
-        """Render a visual progress bar."""
+        """渲染可视化进度条。"""
         s = self.get_status()
         step = s["step"]
         total = s["total_steps"]
@@ -275,7 +276,7 @@ class TrainingManager:
         if not self.running and step == 0:
             return '<div style="color:#94a3b8;text-align:center;padding:12px;">Waiting for training to start...</div>'
 
-        # Color based on progress
+        # 按进度选择颜色
         if pct < 25:
             bar_color = "linear-gradient(90deg, #3b82f6, #6366f1)"
         elif pct < 50:
@@ -322,14 +323,14 @@ class TrainingManager:
 manager = TrainingManager()
 
 
-# ─── Pipeline Stage HTML ────────────────────────────────────────────────────
+# ─── 流水线阶段 HTML ────────────────────────────────────────────────────────
 
 STAGES = ["Rollout", "Reflect", "Aggregate", "Select", "Update", "Gate"]
 STAGE_ICONS = ["🎯", "🔍", "🔗", "✂️", "📝", "🚦"]
 
 
 def render_pipeline_html(active_stage: str = "") -> str:
-    """Render animated pipeline HTML."""
+    """渲染带动画的流水线阶段 HTML。"""
     html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:20px;flex-wrap:wrap;">'
     for i, (name, icon) in enumerate(zip(STAGES, STAGE_ICONS)):
         is_active = name.lower() in active_stage.lower() if active_stage else False
@@ -353,7 +354,7 @@ def render_pipeline_html(active_stage: str = "") -> str:
     return html
 
 
-# ─── Gradio UI ──────────────────────────────────────────────────────────────
+# ─── Gradio 界面 ─────────────────────────────────────────────────────────────
 
 def build_ui():
     configs = discover_configs()
@@ -365,7 +366,7 @@ def build_ui():
         gr.Markdown("*SKILLOPT: Executive Strategy for Self-Evolving Agent Skills — Configure, launch, and monitor training.*")
 
         with gr.Tabs():
-            # ── Tab 1: Configure & Launch ────────────────────────────
+            # ── 标签页 1：配置与启动 ────────────────────────────
             with gr.Tab("⚙️ Configure & Launch"):
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -441,7 +442,7 @@ def build_ui():
                 )
                 stop_btn.click(lambda: manager.stop(), outputs=status_text)
 
-            # ── Tab 2: Monitor ───────────────────────────────────────
+            # ── 标签页 2：监控 ───────────────────────────────────────
             with gr.Tab("📊 Monitor"):
                 pipeline_html = gr.HTML(
                     value=render_pipeline_html(),
@@ -472,7 +473,7 @@ def build_ui():
                     outputs=[pipeline_html, progress_html, log_html],
                 )
 
-            # ── Tab 3: Results ───────────────────────────────────────
+            # ── 标签页 3：结果 ───────────────────────────────────────
             with gr.Tab("📈 Results"):
                 gr.Markdown("### Output Explorer")
                 output_dir = gr.Textbox(
@@ -506,7 +507,7 @@ def build_ui():
                                     steps = str(c.get("train", {}).get("num_steps", "—"))
                                 except Exception:
                                     pass
-                            # Try to find best score from logs
+                            # 尝试从日志中解析最佳分数
                             for log_f in run_dir.glob("**/*.jsonl"):
                                 try:
                                     with open(log_f) as f:

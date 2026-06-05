@@ -1,6 +1,6 @@
-"""【功能描述】环境适配器注册表：按 env.name 解析并实例化 EnvAdapter
-【输入】扁平化配置 dict（含 env 名称及各 adapter 构造参数）
-【输出】EnvAdapter 实例；新增 benchmark 时在 _BUILTIN_ENVS 追加条目即可
+"""【功能描述】环境适配器注册表：按 `env.name` 解析并实例化 `EnvAdapter`。
+【输入】扁平化配置 dict（环境名及适配器构造参数）。
+【输出】`EnvAdapter` 实例；新增 benchmark 时向 `_BUILTIN_ENVS` 追加条目。
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _register_builtins() -> None:
 
 
 def register_env(name: str, adapter_cls: type) -> None:
-    """运行时注册自定义 env（扩展 benchmark 时使用）。"""
+    """运行时注册自定义环境（用于 benchmark 扩展）。"""
     _ENV_REGISTRY[name] = adapter_cls
 
 

@@ -1,20 +1,8 @@
-"""ReflACT Slow Update — epoch-level longitudinal skill refinement.
+"""【功能描述】ReflACT 慢更新 — epoch 级纵向 skill 精炼；每 epoch 结束时比较相同样本集在上一 epoch skill 与当前 epoch skill 下的 rollout 表现（马尔可夫：仅相邻 epoch），由 optimizer 分析回归、改进与持续失败，并将自由形式指导写入 skill 文档的受保护区域。
 
-At the end of each epoch, the slow update compares rollout performance of the
-same sample set under the previous epoch's skill vs. the current epoch's skill
-(Markov: only adjacent epochs). A optimizer analyzes regressions, improvements,
-and persistent failures, then writes a free-form guidance block into a
-**protected** section of the skill document. This section cannot be modified by
-step-level analyst edits — only the slow update process overwrites it.
+【输入】skill_content、results_prev、results_curr、items、comparison_pairs 及 rollout 目录等。
 
-Public API
-----------
-- :func:`inject_empty_slow_update_field` — add empty placeholder (epoch 1)
-- :func:`extract_slow_update_field`      — read current content
-- :func:`replace_slow_update_field`      — overwrite content
-- :func:`has_slow_update_field`          — check if markers are present
-- :func:`build_comparison_text`          — format side-by-side rollout results
-- :func:`run_slow_update`               — optimizer call to produce guidance
+【输出】inject/replace/extract 等字段操作函数；run_slow_update 返回含 slow_update_content 的 dict 或 None。
 """
 from __future__ import annotations
 
@@ -26,12 +14,12 @@ from skillopt.model import chat_optimizer
 from skillopt.prompts import load_prompt
 from skillopt.utils import extract_json
 
-# ── Protected field markers ─────────────────────────────────────────────────
+# ── 受保护字段标记 ─────────────────────────────────────────────────
 
 SLOW_UPDATE_START = "<!-- SLOW_UPDATE_START -->"
 SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 
-# ── Field manipulation helpers ──────────────────────────────────────────────
+# ── 字段操作辅助函数 ──────────────────────────────────────────────
 
 
 def has_slow_update_field(skill: str) -> bool:
@@ -58,27 +46,27 @@ def extract_slow_update_field(skill: str) -> str:
 
 
 def _strip_all_slow_update_fields(skill: str) -> str:
-    """Remove every SLOW_UPDATE_START/END pair (and content between) from *skill*."""
+    """从 *skill* 中移除所有 SLOW_UPDATE_START/END 对（及其间内容）。"""
     while True:
         start = skill.find(SLOW_UPDATE_START)
         if start == -1:
             break
         end = skill.find(SLOW_UPDATE_END, start)
         if end == -1:
-            # Orphan start marker — remove it
+            # 孤立的 start 标记 — 移除它
             skill = skill[:start] + skill[start + len(SLOW_UPDATE_START):]
             break
         skill = skill[:start] + skill[end + len(SLOW_UPDATE_END):]
-    # Clean up stray end markers
+    # 清理遗留的 end 标记
     skill = skill.replace(SLOW_UPDATE_END, "")
-    # Collapse excess blank lines left behind
+    # 合并删除后遗留的多余空行
     while "\n\n\n" in skill:
         skill = skill.replace("\n\n\n", "\n\n")
     return skill.rstrip()
 
 
 def replace_slow_update_field(skill: str, new_content: str) -> str:
-    # Remove all existing slow update regions first to guarantee exactly one.
+    # 先移除所有已有 slow update 区域，保证恰好保留一个
     skill = _strip_all_slow_update_fields(skill)
     block = (
         f"\n\n{SLOW_UPDATE_START}\n"
@@ -88,7 +76,7 @@ def replace_slow_update_field(skill: str, new_content: str) -> str:
     return skill + block
 
 
-# ── Comparison text builder ─────────────────────────────────────────────────
+# ── 比较文本构建 ─────────────────────────────────────────────────
 
 
 _MAX_TRAJ_CHARS = 3000
@@ -101,7 +89,7 @@ def _clip_text(value, limit: int) -> str:
 
 
 def _read_trajectory(rollout_dir: str, task_id: str) -> str:
-    """Read and format a single trajectory from a rollout directory."""
+    """从 rollout 目录读取并格式化单条 trajectory。"""
     conv_path = os.path.join(rollout_dir, "predictions", task_id, "conversation.json")
     if not os.path.exists(conv_path):
         return "(trajectory not available)"
@@ -146,7 +134,7 @@ def _read_trajectory(rollout_dir: str, task_id: str) -> str:
     return text
 
 
-# ── Structured comparison pairs ─────────────────────────────────────────────
+# ── 结构化比较对 ─────────────────────────────────────────────
 
 
 def build_comparison_pairs(
@@ -156,16 +144,15 @@ def build_comparison_pairs(
     prev_rollout_dir: str = "",
     curr_rollout_dir: str = "",
 ) -> list[dict]:
-    """Build a structured list of per-sample comparison entries.
+    """构建逐样本比较条目的结构化列表。
 
-    Each entry bundles the original item, both rollout results, the change
-    category, and both trajectories into one dict — the single source of
-    truth for this sample's longitudinal comparison.
+    每条目将原始 item、两次 rollout 结果、变化类别及两条 trajectory
+    打包为一个 dict — 该样本纵向比较的单一事实来源。
 
     Returns
     -------
     list[dict]
-        One dict per sample with keys:
+        每个样本一个 dict，键为：
         ``id, task, category, prev, curr, prev_trajectory, curr_trajectory``
     """
     prev_by_id = {str(r["id"]): r for r in results_prev}
@@ -216,7 +203,7 @@ def build_comparison_pairs(
 
 
 def save_comparison_pairs(pairs: list[dict], out_path: str) -> None:
-    """Persist comparison pairs to JSON (without trajectory text to save space)."""
+    """将比较对持久化为 JSON（不含 trajectory 文本以节省空间）。"""
     slim = []
     for p in pairs:
         slim.append({
@@ -231,7 +218,7 @@ def save_comparison_pairs(pairs: list[dict], out_path: str) -> None:
 
 
 def format_comparison_text(pairs: list[dict]) -> str:
-    """Format structured comparison pairs into optimizer-readable text."""
+    """将结构化比较对格式化为 optimizer 可读文本。"""
     by_cat: dict[str, list[dict]] = {
         "regressed": [],
         "persistent_fail": [],
@@ -296,7 +283,7 @@ def format_comparison_text(pairs: list[dict]) -> str:
 
 
 
-# ── Optimizer call ────────────────────────────────────────────────────────────
+# ── Optimizer 调用 ────────────────────────────────────────────────────────────
 
 
 def run_slow_update(
@@ -312,34 +299,34 @@ def run_slow_update(
     comparison_pairs: list[dict] | None = None,
     system_prompt: str | None = None,
 ) -> dict | None:
-    """Run the slow update optimizer call for one epoch boundary.
+    """在 epoch 边界执行一次 slow update optimizer 调用。
 
     Parameters
     ----------
     skill_content : str
-        Current epoch's skill (after fast updates).
+        当前 epoch 的 skill（fast update 之后）。
     results_prev : list[dict]
-        Rollout results of the 20 samples under previous epoch's skill.
+        20 个样本在上一 epoch skill 下的 rollout 结果。
     results_curr : list[dict]
-        Rollout results of the 20 samples under current epoch's skill.
+        20 个样本在当前 epoch skill 下的 rollout 结果。
     items : list[dict]
-        The 20 sample items used for comparison.
+        用于比较的 20 个样本 item。
     prev_skill : str
-        Previous epoch's skill content.
+        上一 epoch 的 skill 内容。
     prev_slow_update_content : str
-        The slow update guidance from the previous epoch (to reflect on).
+        上一 epoch 的 slow update 指导（供反思）。
     prev_rollout_dir : str
-        Path to previous epoch rollout output (contains predictions/).
+        上一 epoch rollout 输出路径（含 predictions/）。
     curr_rollout_dir : str
-        Path to current epoch rollout output (contains predictions/).
+        当前 epoch rollout 输出路径（含 predictions/）。
     system_prompt : str | None
-        Custom system prompt override.
+        自定义 system prompt 覆盖。
 
     Returns
     -------
     dict | None
-        Conforms to :class:`~skillopt.types.SlowUpdateResult`:
-        ``{"reasoning": str, "slow_update_content": str}`` or ``None``.
+        符合 :class:`~skillopt.types.SlowUpdateResult`：
+        ``{"reasoning": str, "slow_update_content": str}`` 或 ``None``。
     """
     actual_system = system_prompt if system_prompt is not None else load_prompt("slow_update")
 

@@ -1,22 +1,22 @@
-"""Learning-rate (edit budget) schedulers for ReflACT.
+"""【功能描述】ReflACT 的学习率（编辑预算）调度器；ReflACT 中的「学习率」指每步优化允许的最大 skill 编辑数，调度器控制该预算在训练过程中的变化。
 
-The "learning rate" in ReflACT is the maximum number of skill edits allowed
-per optimization step.  A scheduler controls how this budget changes over
-the course of training.
+【输入】mode、max_lr、min_lr、total_steps 等调度配置参数。
 
-Supported modes
----------------
-- ``constant``   : Fixed budget throughout training.
-- ``linear``     : Linear decay from ``max_lr`` to ``min_lr``.
-- ``cosine``     : Cosine annealing from ``max_lr`` to ``min_lr``.
-- ``autonomous`` : No limit — the model decides how many edits to make.
+【输出】LRScheduler 实例及其 step()/get_lr() 返回的每步编辑预算。
 
-Usage::
+支持的模式
+----------
+- ``constant``   : 训练全程固定预算。
+- ``linear``     : 从 ``max_lr`` 线性衰减至 ``min_lr``。
+- ``cosine``     : 从 ``max_lr`` 余弦退火至 ``min_lr``。
+- ``autonomous`` : 无上限 — 由模型自行决定编辑数量。
+
+用法::
 
     scheduler = build_scheduler(cfg)
     for step in range(1, total_steps + 1):
-        lr = scheduler.step()       # returns edit budget for this step
-        # ... use lr as max_edits ...
+        lr = scheduler.step()       # 返回本步编辑预算
+        # ... 将 lr 用作 max_edits ...
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 
 
 class LRScheduler(ABC):
-    """Base class for edit-budget schedulers."""
+    """编辑预算调度器基类。"""
 
     def __init__(self, max_lr: int, min_lr: int, total_steps: int) -> None:
         self.max_lr = max_lr
@@ -35,15 +35,15 @@ class LRScheduler(ABC):
 
     @abstractmethod
     def _compute_lr(self, step: int) -> int:
-        """Return the edit budget for the given 1-indexed step."""
+        """返回给定 1-indexed step 的编辑预算。"""
 
     def step(self) -> int:
-        """Advance one step and return the edit budget."""
+        """前进一步并返回编辑预算。"""
         self._current_step += 1
         return self._compute_lr(self._current_step)
 
     def get_lr(self, step: int) -> int:
-        """Return the edit budget for an arbitrary step (1-indexed)."""
+        """返回任意 step（1-indexed）的编辑预算。"""
         return self._compute_lr(step)
 
     def state_dict(self) -> dict:
@@ -54,14 +54,14 @@ class LRScheduler(ABC):
 
 
 class ConstantScheduler(LRScheduler):
-    """Fixed edit budget throughout training."""
+    """训练全程固定编辑预算。"""
 
     def _compute_lr(self, step: int) -> int:
         return self.max_lr
 
 
 class LinearScheduler(LRScheduler):
-    """Linear decay from ``max_lr`` to ``min_lr`` over ``total_steps``."""
+    """在 ``total_steps`` 内从 ``max_lr`` 线性衰减至 ``min_lr``。"""
 
     def _compute_lr(self, step: int) -> int:
         if self.total_steps <= 1:
@@ -72,7 +72,7 @@ class LinearScheduler(LRScheduler):
 
 
 class CosineScheduler(LRScheduler):
-    """Cosine annealing from ``max_lr`` to ``min_lr`` over ``total_steps``."""
+    """在 ``total_steps`` 内从 ``max_lr`` 余弦退火至 ``min_lr``。"""
 
     def _compute_lr(self, step: int) -> int:
         if self.total_steps <= 1:
@@ -83,7 +83,7 @@ class CosineScheduler(LRScheduler):
 
 
 class AutonomousScheduler(LRScheduler):
-    """No edit limit — the model decides freely."""
+    """无编辑上限 — 由模型自由决定。"""
 
     NO_LIMIT = 999
 
@@ -91,7 +91,7 @@ class AutonomousScheduler(LRScheduler):
         return self.NO_LIMIT
 
 
-# ── Factory ──────────────────────────────────────────────────────────────
+# ── 工厂 ──────────────────────────────────────────────────────────────
 
 _REGISTRY: dict[str, type[LRScheduler]] = {
     "constant": ConstantScheduler,
@@ -107,18 +107,18 @@ def build_scheduler(
     min_lr: int = 2,
     total_steps: int = 8,
 ) -> LRScheduler:
-    """Build a scheduler from config parameters.
+    """根据配置参数构建调度器。
 
     Parameters
     ----------
     mode : str
-        One of ``constant``, ``linear``, ``cosine``, ``autonomous``.
+        可选 ``constant``、``linear``、``cosine``、``autonomous`` 之一。
     max_lr : int
-        Initial / maximum edit budget.
+        初始 / 最大编辑预算。
     min_lr : int
-        Minimum edit budget (for decay modes).
+        最小编辑预算（用于衰减模式）。
     total_steps : int
-        Total number of optimization steps in training.
+        训练中的优化步总数。
     """
     if mode not in _REGISTRY:
         raise ValueError(

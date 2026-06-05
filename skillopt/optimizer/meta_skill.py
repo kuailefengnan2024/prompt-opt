@@ -1,9 +1,8 @@
-"""Optimizer-side meta skill memory for cross-epoch optimization guidance.
+"""【功能描述】优化器侧 meta skill 记忆，用于跨 epoch 优化指导；维护由相邻 epoch skill 比较提炼的紧凑优化器记忆，不修改目标 skill 文档，而是为后续 propose/merge/rank 编辑提供指导。
 
-This module maintains a compact optimizer-facing memory distilled from
-adjacent-epoch skill comparisons. Unlike ``slow_update``, it does not
-modify the target skill document. Instead, it produces guidance meant to
-improve future optimizer behavior when proposing, merging, and ranking edits.
+【输入】prev_skill、curr_skill、comparison_pairs、prev_meta_skill_content 及可选 system_prompt。
+
+【输出】format_meta_skill_context 返回 prompt 上下文块；run_meta_skill 返回含 meta_skill_content 的 dict 或 None。
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ from skillopt.utils import extract_json
 
 
 def format_meta_skill_context(meta_skill_content: str) -> str:
-    """Render optimizer memory into a prompt-ready context block."""
+    """将优化器记忆渲染为可用于 prompt 的上下文块。"""
     content = (meta_skill_content or "").strip()
     if not content:
         return ""
@@ -38,7 +37,7 @@ def run_meta_skill(
     prev_meta_skill_content: str = "",
     system_prompt: str | None = None,
 ) -> dict | None:
-    """Produce updated optimizer-side meta skill from adjacent epochs."""
+    """根据相邻 epoch 生成更新后的优化器侧 meta skill。"""
     actual_system = system_prompt if system_prompt is not None else load_prompt("meta_skill")
 
     prev_skill_display = prev_skill

@@ -1,4 +1,8 @@
-"""Runtime backend configuration for optimizer/target model calls."""
+"""
+【功能描述】优化器/目标模型调用的运行时后端配置。
+【输入】环境变量 OPTIMIZER_BACKEND、TARGET_BACKEND 及 exec 相关变量；configure_* 参数。
+【输出】全局后端常量、getter/setter、codex/claude exec 配置字典。
+"""
 from __future__ import annotations
 
 import os

@@ -1,8 +1,8 @@
 _base_: ../_base_/default.yaml
 
-# T2I prompt 优化（待实现 skillopt/envs/t2i/）
-# mode: direct  — Skill 文档 = T2I prompt 本体 → 直连 T2I
-# mode: meta    — Skill 文档 = 写 prompt 规则 → LLM(Skill+brief) → T2I（未来）
+# T2I prompt optimization (skillopt/envs/t2i/ pending)
+# mode: direct  — skill document is the T2I prompt text → direct T2I
+# mode: meta    — skill document is prompt-writing rules → LLM(skill+brief) → T2I (future)
 
 train:
   batch_size: 1

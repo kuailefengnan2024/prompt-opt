@@ -1,16 +1,17 @@
-"""ReflACT config loading engine — structured YAML with inheritance.
+"""【功能描述】ReflACT 配置加载引擎：支持 `_base_` 继承的结构化 YAML 与扁平 legacy 格式。
+【输入】YAML 配置文件路径；可选 `overrides`（`key=value` CLI 覆盖）。
+【输出】合并后的配置 dict；`flatten_config(cfg)` 供 trainer 使用的扁平 dict。
 
-Supports two config formats:
-  1. **Structured** (new): sections like ``model``, ``train``, ``gradient``,
-     ``optimizer``, ``evaluation``, ``env`` — with ``_base_`` inheritance.
-  2. **Flat** (legacy): all keys at top level — fully backward compatible.
+支持两种配置格式：
+  1. **结构化**（新）：`model`、`train`、`gradient`、`optimizer`、`evaluation`、`env` 等节，支持 ``_base_`` 继承。
+  2. **扁平**（legacy）：所有键在顶层 — 完全向后兼容。
 
-Usage::
+用法::
 
     from skillopt.config import load_config, flatten_config
 
     cfg = load_config("configs/searchqa_default.yaml")
-    flat = flatten_config(cfg)  # always returns flat dict for trainer
+    flat = flatten_config(cfg)  # 始终返回 trainer 所需的扁平 dict
 """
 from __future__ import annotations
 
@@ -20,13 +21,13 @@ from typing import Any
 
 import yaml
 
-# ── Section names that indicate a structured config ──────────────────────
+# ── 标识结构化配置的节名 ──────────────────────────────────────────────────
 
 _STRUCTURED_SECTIONS = frozenset({
     "model", "train", "gradient", "optimizer", "evaluation", "env",
 })
 
-# ── Structured → flat key mapping ────────────────────────────────────────
+# ── 结构化 → 扁平键映射 ────────────────────────────────────────────────────
 
 _FLATTEN_MAP: dict[str, str] = {
     "model.backend": "model_backend",
@@ -110,10 +111,10 @@ _FLATTEN_MAP: dict[str, str] = {
 }
 
 
-# ── Deep merge ───────────────────────────────────────────────────────────
+# ── 深度合并 ───────────────────────────────────────────────────────────
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Recursively merge *override* into *base* (returns new dict)."""
+    """将 *override* 递归合并进 *base*（返回新 dict）。"""
     result = copy.deepcopy(base)
     for key, val in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(val, dict):
@@ -123,10 +124,10 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-# ── YAML loading with _base_ inheritance ─────────────────────────────────
+# ── 带 _base_ 继承的 YAML 加载 ─────────────────────────────────────────
 
 def _load_yaml(path: str, _visited: set[str] | None = None) -> dict:
-    """Load a YAML file, resolving ``_base_`` inheritance recursively."""
+    """加载 YAML 文件，递归解析 ``_base_`` 继承。"""
     abs_path = os.path.abspath(path)
     if _visited is None:
         _visited = set()
@@ -146,22 +147,22 @@ def _load_yaml(path: str, _visited: set[str] | None = None) -> dict:
     return cfg
 
 
-# ── Format detection ─────────────────────────────────────────────────────
+# ── 格式检测 ─────────────────────────────────────────────────────────────
 
 def is_structured(cfg: dict) -> bool:
-    """Return True if *cfg* uses the new structured section format."""
+    """若 *cfg* 使用新的结构化节格式则返回 True。"""
     return any(
         key in _STRUCTURED_SECTIONS and isinstance(cfg.get(key), dict)
         for key in cfg
     )
 
 
-# ── Flatten ──────────────────────────────────────────────────────────────
+# ── 扁平化 ──────────────────────────────────────────────────────────────
 
 def flatten_config(cfg: dict) -> dict:
-    """Convert a structured config to the flat dict expected by the trainer.
+    """将结构化配置转为 trainer 期望的扁平 dict。
 
-    If *cfg* is already flat, returns a shallow copy unchanged.
+    若 *cfg* 已是扁平格式，则返回其浅拷贝且内容不变。
     """
     if not is_structured(cfg):
         return dict(cfg)
@@ -175,14 +176,14 @@ def flatten_config(cfg: dict) -> dict:
             "`evaluation.use_gate: false` from the config."
         )
 
-    # Apply the explicit mapping
+    # 应用显式映射
     for dotted, flat_key in _FLATTEN_MAP.items():
         section, key = dotted.split(".", 1)
         section_dict = cfg.get(section, {})
         if isinstance(section_dict, dict) and key in section_dict:
             flat[flat_key] = section_dict[key]
 
-    # Pass through env-specific keys not in the explicit mapping
+    # 透传未列入显式映射的环境专有键
     env_section = cfg.get("env", {})
     if isinstance(env_section, dict):
         mapped_env_keys = {
@@ -197,10 +198,10 @@ def flatten_config(cfg: dict) -> dict:
     return flat
 
 
-# ── Override application ─────────────────────────────────────────────────
+# ── 覆盖项应用 ───────────────────────────────────────────────────────────
 
 def _cast_value(val_str: str) -> Any:
-    """Auto-cast a CLI string value to int / float / bool / str."""
+    """将 CLI 字符串自动转换为 int / float / bool / str。"""
     if val_str.lower() in ("true", "yes"):
         return True
     if val_str.lower() in ("false", "no"):
@@ -217,10 +218,10 @@ def _cast_value(val_str: str) -> Any:
 
 
 def apply_overrides(cfg: dict, overrides: list[str]) -> None:
-    """Apply ``key=value`` overrides to a structured config (in place).
+    """将 ``key=value`` 覆盖就地写入结构化配置。
 
-    Supports both ``section.key=value`` (for structured configs) and
-    ``key=value`` (for flat configs or flat keys in env section).
+    支持 ``section.key=value``（结构化配置）与
+    ``key=value``（扁平配置或 env 节中的扁平键）。
     """
     for item in overrides:
         if "=" not in item:
@@ -235,29 +236,29 @@ def apply_overrides(cfg: dict, overrides: list[str]) -> None:
             else:
                 cfg.setdefault(section, {})[subkey] = val
         else:
-            # Flat key — apply to top level (for legacy compat)
+            # 扁平键 — 写入顶层（legacy 兼容）
             cfg[key] = val
 
 
-# ── Public API ───────────────────────────────────────────────────────────
+# ── 公开 API ─────────────────────────────────────────────────────────────
 
 def load_config(
     path: str,
     overrides: list[str] | None = None,
 ) -> dict:
-    """Load a config file with ``_base_`` inheritance and optional overrides.
+    """加载配置文件，支持 ``_base_`` 继承与可选覆盖项。
 
     Parameters
     ----------
     path : str
-        Path to the YAML config file.
+        YAML 配置文件路径。
     overrides : list[str] | None
-        ``key=value`` strings from ``--cfg-options``.
+        来自 ``--cfg-options`` 的 ``key=value`` 字符串列表。
 
     Returns
     -------
     dict
-        The merged config (structured or flat depending on the YAML).
+        合并后的配置（结构化或扁平，取决于 YAML 内容）。
     """
     cfg = _load_yaml(path)
     if overrides:

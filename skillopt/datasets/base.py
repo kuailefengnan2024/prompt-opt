@@ -1,31 +1,30 @@
-"""Generic task dataloader abstractions for ReflACT.
+"""【功能描述】ReflACT 通用任务数据加载抽象：批次采样与 episode 规划（非张量 DataLoader）。
+【输入】训练配置 `cfg`、划分目录或 `data_path`、batch/seed 等采样参数。
+【输出】`BatchSpec` 列表及 train/val/test 条目，供环境与 trainer 消费。
 
-ReflACT does not train model parameters directly. Instead, it iterates over
-task batches, rolls out the current skill, reflects on failures/successes,
-and updates the skill document. Because of that, the "dataloader" abstraction
-here is closer to a batch sampler / episode planner than a tensor loader.
+ReflACT 不直接训练模型参数，而是迭代任务批次、rollout 当前 skill、反思并更新 skill 文档；
+因此此处的「dataloader」更接近批次采样器 / episode 规划器。
 
-Class hierarchy::
+类层次::
 
-    BaseDataLoader          # abstract — simulator-backed envs (e.g. ALFWorld)
-    └── SplitDataLoader     # abstract — dataset-backed envs with split_dir
+    BaseDataLoader          # 抽象 — 模拟器类环境（如 ALFWorld）
+    └── SplitDataLoader     # 抽象 — 带 split_dir 的数据集类环境
 
-SplitDataLoader supports two dataset entry modes:
+SplitDataLoader 支持两种数据集入口：
 
-1. ``split_mode="split_dir"``: consume an existing split directory.
-2. ``split_mode="ratio"``: build a deterministic split directory from a raw
-   dataset path using an explicit train:val:test ratio.
+1. ``split_mode="split_dir"``：消费已有划分目录。
+2. ``split_mode="ratio"``：从原始 ``data_path`` 按 train:val:test 比例
+   确定性生成划分目录。
 
-In either case, the standardised split layout is:
+标准划分布局为::
 
     split_dir/
-    ├── train/      # training items
-    ├── val/        # validation / selection items (gate)
-    └── test/       # held-out test items
+    ├── train/      # 训练样本
+    ├── val/        # 验证 / 选择集（gate）
+    └── test/       # 留出测试集
 
-Each subdirectory's contents are benchmark-specific.  Subclasses only need
-to implement ``load_split_items(split_path)`` to teach the loader how to
-read items from one of those directories.
+各子目录内容为 benchmark 专有；子类仅需实现
+``load_split_items(split_path)`` 以说明如何读取其中一个目录。
 """
 from __future__ import annotations
 
@@ -40,25 +39,23 @@ from typing import Any
 
 @dataclass(slots=True)
 class BatchSpec:
-    """A concrete batch request consumed by the training loop.
+    """训练循环消费的具体批次请求。
 
     Parameters
     ----------
     phase : str
-        ``"train"`` or ``"eval"``.
+        ``"train"`` 或 ``"eval"``。
     split : str
-        Dataset split name, typically ``"train"`` or an eval split.
+        数据集划分名，通常为 ``"train"`` 或某 eval 划分。
     seed : int
-        Random seed used to construct the batch deterministically.
+        用于确定性构造本批次的随机种子。
     batch_size : int
-        Requested number of items / episodes in this batch.
+        本批次请求的条目 / episode 数量。
     payload : object | None
-        Environment-specific batch payload. For dataset-backed environments
-        this is often a list of sampled items; for simulator-backed
-        environments this may be ``None`` and the seed alone can define the
-        batch.
+        环境专有的批次载荷。数据集类环境常为采样条目列表；
+        模拟器类环境可为 ``None``，仅由 seed 定义批次。
     metadata : dict[str, Any]
-        Optional structured metadata for logging, resume, or curriculum logic.
+        可选结构化元数据，用于日志、恢复或课程学习。
     """
 
     phase: str
@@ -70,39 +67,38 @@ class BatchSpec:
 
 
 class BaseDataLoader(ABC):
-    """Abstract base class for task batch planning in ReflACT.
+    """ReflACT 任务批次规划的抽象基类。
 
-    Subclasses are responsible for defining how a train or eval batch is
-    sampled. The default implementation here provides deterministic epoch seed
-    planning so all loaders share the same reproducibility behavior.
+    子类负责定义 train/eval 批次如何采样；本类默认实现提供
+    确定性的 epoch seed 规划，使各 loader 共享相同可复现行为。
     """
 
     def setup(self, cfg: dict) -> None:
-        """Optional one-time initialization with the full trainer config."""
+        """可选：使用完整 trainer 配置做一次性初始化。"""
 
     def set_out_root(self, out_root: str) -> None:
-        """Optional hook for loaders that persist split files or state."""
+        """可选：供需持久化划分文件或状态的 loader 使用。"""
 
     def state_dict(self) -> dict[str, Any]:
-        """Return serializable loader state for resume support."""
+        """返回可序列化的 loader 状态，用于恢复训练。"""
         return {}
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
-        """Restore loader state from :meth:`state_dict` output."""
+        """从 :meth:`state_dict` 输出恢复 loader 状态。"""
 
     def get_train_size(self) -> int | None:
-        """Return the size of the training pool when known."""
+        """在已知时返回训练池大小。"""
         return None
 
     @staticmethod
     def make_base_seeds(steps_per_epoch: int, accumulation: int, seed: int) -> list[int]:
-        """Return the deterministic seed pool used to define train batches."""
+        """返回用于定义 train 批次的确定性种子池。"""
         batches_per_epoch = steps_per_epoch * accumulation
         return [seed + i + 1 for i in range(batches_per_epoch)]
 
     @staticmethod
     def shuffle_epoch_seeds(base_seeds: list[int], epoch: int, seed: int) -> list[int]:
-        """Return the per-epoch deterministic shuffle of *base_seeds*."""
+        """返回 *base_seeds* 在每个 epoch 的确定性打乱结果。"""
         epoch_rng = random.Random(seed + epoch * 1000)
         shuffled = list(base_seeds)
         epoch_rng.shuffle(shuffled)
@@ -118,7 +114,7 @@ class BaseDataLoader(ABC):
         seed: int,
         **kwargs,
     ) -> list[BatchSpec]:
-        """Build the full list of training batches for one epoch."""
+        """构建一个 epoch 内的全部 train 批次列表。"""
         base_seeds = self.make_base_seeds(
             steps_per_epoch=steps_per_epoch,
             accumulation=accumulation,
@@ -132,7 +128,7 @@ class BaseDataLoader(ABC):
 
     @abstractmethod
     def build_train_batch(self, batch_size: int, seed: int, **kwargs) -> BatchSpec:
-        """Construct one training batch specification."""
+        """构造一条 train 批次规格。"""
 
     @abstractmethod
     def build_eval_batch(
@@ -142,15 +138,15 @@ class BaseDataLoader(ABC):
         seed: int,
         **kwargs,
     ) -> BatchSpec:
-        """Construct one evaluation batch specification."""
+        """构造一条 eval 批次规格。"""
 
 
-# ── Split-based dataloader for dataset-backed environments ──────────────
+# ── 数据集类环境的划分式 DataLoader ─────────────────────────────────────
 
-# Canonical split names expected under split_dir/
+# split_dir/ 下期望的标准划分名
 SPLIT_NAMES = ("train", "val", "test")
 
-# Maps legacy / trainer split names → canonical directory names
+# legacy / trainer 划分名 → 标准目录名
 _SPLIT_ALIAS: dict[str, str] = {
     "train": "train",
     "valid_seen": "val",
@@ -162,7 +158,7 @@ _SPLIT_ALIAS: dict[str, str] = {
 
 
 def _load_json_or_jsonl(path: str) -> list[dict]:
-    """Load a list of items from a JSON or JSONL file."""
+    """从 JSON 或 JSONL 文件加载条目列表。"""
     with open(path, encoding="utf-8") as f:
         content = f.read().strip()
     if not content:
@@ -223,14 +219,13 @@ def _compute_split_counts(total: int, ratio: tuple[int, int, int]) -> tuple[int,
 
 
 class SplitDataLoader(BaseDataLoader):
-    """Base class for dataset-backed environments.
+    """数据集类环境的基类。
 
-    Supported modes:
+    支持模式：
 
-    - ``split_mode="split_dir"``: load an existing ``train/``, ``val/``,
-      ``test/`` directory tree.
-    - ``split_mode="ratio"``: load raw items from ``data_path`` and materialize
-      a deterministic split directory with the requested ratio.
+    - ``split_mode="split_dir"``：加载已有 ``train/``、``val/``、``test/`` 目录树。
+    - ``split_mode="ratio"``：从 ``data_path`` 加载原始条目并按比例
+      确定性物化划分目录。
     """
 
     def __init__(
@@ -255,7 +250,7 @@ class SplitDataLoader(BaseDataLoader):
         self.limit = limit
         self._splits: dict[str, list[dict]] = {}
 
-    # ── Setup ────────────────────────────────────────────────────────────
+    # ── 初始化 ────────────────────────────────────────────────────────────
 
     def setup(self, cfg: dict) -> None:
         if not self.split_mode:
@@ -300,10 +295,9 @@ class SplitDataLoader(BaseDataLoader):
         return os.path.join(out_root, "_generated_splits", f"{env_name}_{ratio_tag}_seed{self.split_seed}")
 
     def load_raw_items(self, data_path: str) -> list[dict]:
-        """Load raw items from a dataset path before ratio splitting.
+        """在按比例划分前从数据集路径加载原始条目。
 
-        Subclasses can override when the raw dataset is not a single JSON/JSONL
-        file or when directory layouts require custom normalization.
+        当原始数据不是单个 JSON/JSONL 或目录布局需自定义规范化时，子类可覆盖。
         """
         if os.path.isdir(data_path):
             if any(os.path.isdir(os.path.join(data_path, name)) for name in SPLIT_NAMES):
@@ -388,10 +382,10 @@ class SplitDataLoader(BaseDataLoader):
         print(f"  [{type(self).__name__}] {counts}  (from {self.split_dir})")
 
     def load_split_items(self, split_path: str) -> list[dict]:
-        """Load items from one split directory (e.g. ``split_dir/train/``).
+        """从某一划分目录加载条目（如 ``split_dir/train/``）。
 
-        Default: finds the first ``.json`` file in the directory and loads it
-        as a JSON array.  Subclasses can override for custom formats.
+        默认：在目录中找第一个 ``.json`` 并按 JSON 数组加载。
+        子类可覆盖以支持自定义格式。
         """
         json_files = sorted(glob.glob(os.path.join(split_path, "*.json")))
         if not json_files:
@@ -406,7 +400,7 @@ class SplitDataLoader(BaseDataLoader):
             )
         return items
 
-    # ── Accessors ────────────────────────────────────────────────────────
+    # ── 访问器 ────────────────────────────────────────────────────────────
 
     @property
     def train_items(self) -> list[dict]:
@@ -421,7 +415,7 @@ class SplitDataLoader(BaseDataLoader):
         return self._splits.get("test", [])
 
     def get_split_items(self, split: str) -> list[dict]:
-        """Resolve a split name (including legacy aliases) to its item list."""
+        """将划分名（含 legacy 别名）解析为对应条目列表。"""
         canonical = _SPLIT_ALIAS.get(split, split)
         return list(self._splits.get(canonical, self.val_items))
 
@@ -438,10 +432,10 @@ class SplitDataLoader(BaseDataLoader):
         seed: int,
         **kwargs,
     ) -> list[BatchSpec]:
-        """Build one full epoch that covers the train split in shuffled order.
+        """构建覆盖 train 划分一次打乱遍历的完整 epoch。
 
-        For split-backed datasets, an epoch should correspond to one pass over
-        the available training items rather than repeated independent sampling.
+        对划分型数据集，一个 epoch 应对可用训练条目做一次遍历，
+        而非重复独立随机采样。
         """
         epoch_rng = random.Random(seed + epoch * 1000)
         items = list(self.train_items)
@@ -457,9 +451,8 @@ class SplitDataLoader(BaseDataLoader):
             batch_items = items[cursor: cursor + batch_size]
             cursor += len(batch_items)
 
-            # Extremely small datasets can leave trailing empty microbatches
-            # when accumulation > 1. Reuse the shuffled prefix in that case so
-            # the trainer still receives the expected batch count.
+            # 极小数据集在 accumulation > 1 时可能产生尾部空 microbatch；
+            # 此时复用打乱前缀，使 trainer 仍收到预期批次数。
             if not batch_items and items:
                 refill_rng = random.Random(seed + epoch * 1000 + batch_idx + 1)
                 batch_items = list(items)
@@ -478,7 +471,7 @@ class SplitDataLoader(BaseDataLoader):
 
         return batches
 
-    # ── Batch construction ───────────────────────────────────────────────
+    # ── 批次构造 ─────────────────────────────────────────────────────────
 
     def build_train_batch(self, batch_size: int, seed: int, **kwargs) -> BatchSpec:
         rng = random.Random(seed)

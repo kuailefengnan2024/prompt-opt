@@ -1,4 +1,9 @@
-"""Helpers for switching between patch edits and rewrite-from-suggestions."""
+"""【功能描述】在 patch 编辑与基于 suggestions 的重写之间切换的辅助函数，统一 update_mode 归一化、payload 键/标签及项描述。
+
+【输入】update_mode 字符串、含 edits/revise_suggestions/skill_candidates 的 container dict。
+
+【输出】normalize_update_mode、get_payload_items、describe_item 等工具函数返回值。
+"""
 from __future__ import annotations
 
 from typing import Any

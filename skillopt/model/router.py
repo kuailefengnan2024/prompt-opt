@@ -1,4 +1,8 @@
-"""Runtime backend router for ReflACT model calls."""
+"""
+【功能描述】ReflACT 模型调用的运行时后端路由。
+【输入】REFLACT_MODEL_BACKEND 环境变量；各 chat 函数入参。
+【输出】经当前活跃后端转发的 chat 响应与 token 汇总。
+"""
 from __future__ import annotations
 
 import os
@@ -28,7 +32,7 @@ def _all_backend_modules() -> list[Any]:
 
 
 def set_backend(name: str | None) -> str:
-    """Select the active model backend for subsequent calls."""
+    """为后续调用选择活跃的模型后端。"""
     global _ACTIVE_BACKEND
     normalized = normalize_backend_name(name)
     if normalized not in {"azure_openai", "codex", "claude"}:

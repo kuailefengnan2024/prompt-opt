@@ -1,8 +1,8 @@
-"""ReflACT Aggregate stage — hierarchical patch merging.
+"""【功能描述】ReflACT Aggregate 阶段 — 层次化 patch 合并；将 Reflect 阶段独立生成的 patch 通过层次化 LLM 调用合并为单一连贯 patch，失败驱动 patch 优先于成功驱动 patch。
 
-The Aggregate stage takes independently-generated patches from the Reflect
-stage and merges them into a single coherent patch via hierarchical LLM calls.
-Failure-driven patches take priority over success-driven ones.
+【输入】skill_content、failure_patches、success_patches、batch_size、update_mode 等。
+
+【输出】合并后的 Patch dict（含 edits/reasoning 或对应 payload 键）。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from skillopt.prompts import load_prompt
 from skillopt.utils import extract_json
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# ── 内部辅助函数 ──────────────────────────────────────────────────────────
 
 def _merge_batch(
     skill_content: str,
@@ -33,7 +33,7 @@ def _merge_batch(
     meta_skill_context: str = "",
     level: int = 1,
 ) -> dict:
-    """Call optimizer LLM to merge a batch of patches into one."""
+    """调用 optimizer LLM 将一批 patch 合并为一个。"""
     patches_text = json.dumps(patches, ensure_ascii=False, indent=2)
     user = (
         f"## Current Skill\n{skill_content}\n\n"
@@ -58,7 +58,7 @@ def _merge_batch(
             return merged
     except Exception:  # noqa: BLE001
         pass
-    # Fallback: concatenate all edits
+    # 回退：拼接所有编辑
     all_edits = []
     for p in patches:
         for e in get_payload_items(p, update_mode):
@@ -78,9 +78,9 @@ def _hierarchical_merge(
     workers: int = 16,
     meta_skill_context: str = "",
 ) -> dict:
-    """Hierarchically merge N patches using the given system prompt.
+    """使用给定 system prompt 层次化合并 N 个 patch。
 
-    Same-level batches are executed in PARALLEL via ThreadPoolExecutor.
+    同层 batch 通过 ThreadPoolExecutor 并行执行。
     """
     if not patches:
         return {"reasoning": "no patches", payload_key(update_mode): []}
@@ -138,7 +138,7 @@ def _hierarchical_merge(
     return current[0]
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── 公共 API ────────────────────────────────────────────────────────────────
 
 def merge_patches(
     skill_content: str,
@@ -150,13 +150,13 @@ def merge_patches(
     update_mode: str = "patch",
     meta_skill_context: str = "",
 ) -> dict:
-    """Failure-first hierarchical merge with support count tracking.
+    """失败优先的层次化合并，并跟踪 support count。
 
-    1. Merge failure patches independently (parallel)
-    2. Merge success patches independently (parallel)
-    3. Final merge: combine both groups with failure priority
+    1. 独立合并失败 patch（并行）
+    2. 独立合并成功 patch（并行）
+    3. 最终合并：合并两组，失败组优先
 
-    Returns a merged :class:`~skillopt.types.Patch` dict (``edits`` + ``reasoning``).
+    返回合并后的 :class:`~skillopt.types.Patch` dict（``edits`` + ``reasoning``）。
     """
     if verbose:
         print(

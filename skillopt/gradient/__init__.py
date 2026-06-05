@@ -1,13 +1,13 @@
-"""SkillOpt Gradient -- trajectory analysis and patch generation.
+"""【功能描述】SkillOpt 梯度 — trajectory 分析与 patch 生成，类比神经网络训练中的梯度计算：分析 minibatch rollout trajectory 以产生 skill 编辑 patch（驱动 skill 更新的「梯度」）。
 
-Analogous to gradient computation in neural network training: analyzes
-minibatch rollout trajectories to produce skill-edit patches (the "gradient"
-that drives skill updates).
+【输入】各子模块的 run_minibatch_reflect、merge_patches 等 API 及对应参数。
 
-Modules
+【输出】导出 run_minibatch_reflect、merge_patches 等公共符号。
+
+子模块
 -------
-- reflect: minibatch trajectory analysis (gradient computation)
-- aggregate: hierarchical patch merging (gradient aggregation)
+- reflect: minibatch trajectory 分析（梯度计算）
+- aggregate: 层次化 patch 合并（梯度聚合）
 """
 from skillopt.gradient.reflect import (  # noqa: F401
     run_minibatch_reflect,

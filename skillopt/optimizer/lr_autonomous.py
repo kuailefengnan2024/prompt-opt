@@ -1,4 +1,9 @@
-"""Optimizer-driven autonomous update-size decisions."""
+"""【功能描述】由优化器驱动的自主更新规模决策，调用 optimizer LLM 决定本步应应用多少条更新项。
+
+【输入】skill_content、merged_patch、update_mode、rollout 指标及 step_buffer_context、meta_skill_context 等上下文。
+
+【输出】包含 learning_rate、reasoning、confidence 等字段的决策记录 dict。
+"""
 from __future__ import annotations
 
 import json
@@ -39,11 +44,10 @@ def decide_autonomous_learning_rate(
     step_buffer_context: str = "",
     meta_skill_context: str = "",
 ) -> dict:
-    """Ask the optimizer to choose the number of update items for this step.
+    """请求 optimizer 为本步选择更新项数量。
 
-    The prompt intentionally avoids default budgets, candidate budget lists, or
-    scheduler history. The only hard post-processing is validity: the returned
-    integer is clamped to the available item count.
+    prompt 刻意避免默认预算、候选预算列表或调度器历史。唯一硬性后处理是有效性：
+    返回的整数会被 clamp 到可用项数量范围内。
     """
     items = get_payload_items(merged_patch, update_mode)
     available = len(items)

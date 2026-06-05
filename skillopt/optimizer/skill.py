@@ -1,8 +1,8 @@
-"""ReflACT skill operations — edit application and patch processing.
+"""【功能描述】ReflACT skill 操作 — 编辑应用与 patch 处理，ReflACT 流水线 Update 阶段（⑤）：将排序后的编辑集应用到当前 skill 文档，生成更新候选，类比神经网络训练中的 optimizer.step()。
 
-The Update stage (⑤) of the ReflACT pipeline: apply a ranked set of
-edits to the current skill document, producing an updated candidate.
-Analogous to optimizer.step() in neural network training.
+【输入】skill 文档字符串、Edit/Patch 实例或 dict。
+
+【输出】apply_edit/apply_patch 返回更新后的 skill；apply_patch_with_report 另返回逐编辑报告。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 
 
 def _is_in_slow_update_region(skill: str, target: str) -> bool:
-    """Check if *target* text falls within the protected slow update region."""
+    """检查 *target* 文本是否落在受保护的 slow update 区域内。"""
     start_idx = skill.find(SLOW_UPDATE_START)
     end_idx = skill.find(SLOW_UPDATE_END)
     if start_idx == -1 or end_idx == -1:
@@ -29,7 +29,7 @@ def _is_in_slow_update_region(skill: str, target: str) -> bool:
 
 
 def _strip_slow_update_markers(text: str) -> str:
-    """Remove any SLOW_UPDATE markers from edit content to prevent duplication."""
+    """从编辑内容中移除 SLOW_UPDATE 标记，防止重复。"""
     return (
         text.replace(SLOW_UPDATE_START, "")
             .replace(SLOW_UPDATE_END, "")
@@ -109,17 +109,16 @@ def _apply_edit_with_report(skill: str, edit: EditType | dict) -> tuple[str, dic
 
 
 def apply_edit(skill: str, edit: EditType | dict) -> str:
-    """Apply a single edit operation to the skill document.
+    """将单条编辑操作应用到 skill 文档。
 
     Parameters
     ----------
     skill : str
-        Current skill document content.
+        当前 skill 文档内容。
     edit : Edit | dict
-        An :class:`~skillopt.types.Edit` instance or a plain dict with
-        keys ``op``, ``content``, ``target``.
+        :class:`~skillopt.types.Edit` 实例或含 ``op``、``content``、``target`` 键的普通 dict。
 
-    Edits targeting the protected slow-update region are silently skipped.
+    针对受保护 slow-update 区域的编辑会被静默跳过。
     """
     updated_skill, _ = _apply_edit_with_report(skill, edit)
     return updated_skill
@@ -129,7 +128,7 @@ def apply_patch_with_report(
     skill: str,
     patch: PatchType | dict,
 ) -> tuple[str, list[dict]]:
-    """Apply a patch and return a per-edit report for observability."""
+    """应用 patch 并返回逐编辑报告，便于观测。"""
     edits = patch.edits if hasattr(patch, "edits") else patch.get("edits", [])
     reports: list[dict] = []
     for idx, edit in enumerate(edits, 1):
@@ -150,15 +149,14 @@ def apply_patch_with_report(
 
 
 def apply_patch(skill: str, patch: PatchType | dict) -> str:
-    """Apply a patch (list of edits) to the skill document sequentially.
+    """顺序将 patch（编辑列表）应用到 skill 文档。
 
     Parameters
     ----------
     skill : str
-        Current skill document content.
+        当前 skill 文档内容。
     patch : Patch | dict
-        A :class:`~skillopt.types.Patch` instance or a plain dict with
-        key ``edits`` containing a list of edit operations.
+        :class:`~skillopt.types.Patch` 实例或含 ``edits`` 编辑操作列表键的普通 dict。
     """
     updated_skill, _ = apply_patch_with_report(skill, patch)
     return updated_skill

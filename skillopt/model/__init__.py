@@ -1,4 +1,8 @@
-"""ReflACT model API with runtime backend selection for the target path."""
+"""
+【功能描述】ReflACT 模型 API，为目标路径提供运行时后端选择。
+【输入】chat 调用的 system/user/messages、后端与部署配置、环境变量。
+【输出】模型文本或消息、用量字典、token 汇总、当前后端名。
+"""
 
 from __future__ import annotations
 
@@ -23,11 +27,10 @@ from skillopt.model.backend_config import (  # noqa: F401
 
 
 def set_backend(name: str | None) -> str:
-    """Backward-compatible global backend setter.
+    """向后兼容的全局后端设置入口。
 
-    Historically the codebase used one shared backend for both optimizer and
-    target. Keep that entry point so older scripts continue to work, while
-    mapping it onto the split optimizer/target backend model.
+    历史上代码库对优化器与目标共用同一后端；保留该入口以便旧脚本继续工作，
+    同时映射到拆分后的 optimizer/target 后端模型。
     """
     normalized = str(name or "azure_openai").strip().lower()
     if normalized in {"azure_openai", "openai_chat", "azure", "azure-openai"}:
@@ -54,7 +57,7 @@ def set_backend(name: str | None) -> str:
 
 
 def get_backend_name() -> str:
-    """Best-effort backward-compatible backend summary."""
+    """尽力返回向后兼容的后端摘要名。"""
     optimizer = get_optimizer_backend()
     target = get_target_backend()
     if optimizer == "claude_chat" and target == "claude_chat":

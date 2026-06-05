@@ -1,15 +1,17 @@
-"""ReflACT Trainer — the main training loop.
+"""【功能描述】ReflACT 训练器，主编排 6 阶段 ReflACT 流水线。
+【输入】cfg 配置字典、adapter 环境适配器实例。
+【输出】训练产物（skills、history、summary 等）及 summary 字典。
 
-Orchestrates the 6-stage ReflACT pipeline:
-  1. Rollout   — execute episodes with current skill
-  2. Reflect   — analyze trajectories, generate patches
-  3. Aggregate — hierarchical merge of patches
-  4. Select    — rank and select top edits
-  5. Update    — apply edits to skill document
-  6. Evaluate  — validate candidate skill, accept/reject
+流水线阶段：
+  1. 推演（Rollout）— 用当前 skill 执行 episode
+  2. 反思（Reflect）— 分析轨迹并生成 patch
+  3. 聚合（Aggregate）— 分层合并 patch
+  4. 筛选（Select）— 排序并选取 top 编辑
+  5. 更新（Update）— 将编辑应用到 skill 文档
+  6. 评估（Evaluate）— 验证候选 skill，接受/拒绝
 
-The trainer is environment-agnostic; all environment-specific logic is
-delegated to an :class:`~skillopt.envs.base.EnvAdapter` instance.
+训练器与环境无关；环境相关逻辑均委托给
+:class:`~skillopt.envs.base.EnvAdapter`。
 """
 from __future__ import annotations
 
@@ -63,15 +65,15 @@ from skillopt.model import (
 from skillopt.utils import compute_score, skill_hash
 
 
-# ── Patch normalization ───────────────────────────────────────────────────────
+# ── Patch 规范化 ─────────────────────────────────────────────────────────────
 
 def _normalise_patches(
     raw_patches: list[dict | None],
     update_mode: str = "patch",
 ) -> tuple[list[dict], list[dict]]:
-    """Extract inner 'patch' sub-dict, split into failure/success lists.
+    """提取内层 patch 子字典，拆分为 failure/success 列表。
 
-    Each element is expected to conform to :class:`~skillopt.types.RawPatch`.
+    每个元素应符合 :class:`~skillopt.types.RawPatch`。
     """
     mode = normalize_update_mode(update_mode)
     failure: list[dict] = []
@@ -187,11 +189,10 @@ def _build_longitudinal_pairs(
     seed: int,
     out_root: str,
 ) -> tuple[list[dict], list[dict]]:
-    """Build longitudinal pairs, optionally filtering by change category.
+    """构建纵向对比对，可按变化类别过滤。
 
-    ``mixed`` preserves the legacy behavior exactly. ``changed`` keeps only
-    10/01 pairs and attempts to top up to ``target_n`` by scanning the train
-    split once. ``unchanged`` keeps only 00/11 pairs and does not top up.
+    ``mixed`` 完全保留旧行为。``changed`` 仅保留 10/01 对，并尝试扫描 train
+    划分一次以补足至 ``target_n``。``unchanged`` 仅保留 00/11 对且不补足。
     """
     all_pairs = build_comparison_pairs(
         initial_prev_results,
@@ -243,7 +244,7 @@ def _build_longitudinal_pairs(
     return selected_pairs[:target_n], all_pairs
 
 
-# ── History / persistence helpers ─────────────────────────────────────────────
+# ── 历史记录 / 持久化辅助 ─────────────────────────────────────────────────────
 
 _SECRET_KEYS = {
     "azure_api_key",
@@ -364,7 +365,7 @@ def _resolve_train_size(cfg: dict, dataloader) -> int:
 
 
 def _compute_task_type_buckets(results: list[dict], task_types: list[str]) -> dict[str, dict]:
-    """Compute per-task-type success rates."""
+    """计算各 task_type 的成功率。"""
     buckets: dict[str, dict] = {}
     for task in task_types + ["overall"]:
         buckets[task] = {"total": 0, "hard": 0, "soft": 0.0}
@@ -380,7 +381,7 @@ def _compute_task_type_buckets(results: list[dict], task_types: list[str]) -> di
 
 
 def _format_rejection_buffer(buffer: list[dict]) -> str:
-    """**DEPRECATED** — kept for backward compat; use _format_step_buffer."""
+    """**已弃用** — 为向后兼容保留；请使用 _format_step_buffer。"""
     return _format_step_buffer(buffer)
 
 
@@ -388,23 +389,23 @@ def _extract_failure_patterns(
     rollout_results: list[dict],
     step_dir: str,
 ) -> list[dict]:
-    """Extract compact failure patterns from rollout results.
+    """从 rollout 结果提取紧凑的失败模式。
 
-    Uses analyst ``failure_summary`` from minibatch patches when available,
-    otherwise falls back to ``fail_reason`` prefix grouping.
+    优先使用 minibatch patch 中 analyst 的 ``failure_summary``；
+    否则回退到 ``fail_reason`` 前缀分组。
     """
     failures = [r for r in rollout_results if not r.get("hard")]
     if not failures:
         return []
 
-    # Group by fail_reason prefix
+    # 按 fail_reason 前缀分组
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in failures:
         reason = r.get("fail_reason", "unknown")
         prefix = reason.split(":")[0].strip() if ":" in reason else reason
         groups[prefix].append(r)
 
-    # Try richer descriptions from analyst patches
+    # 尝试从 analyst patch 获取更丰富的描述
     analyst_descs: list[str] = []
     patch_globs = [
         os.path.join(step_dir, "patches", "minibatch_fail_*.json"),
@@ -439,13 +440,12 @@ def _extract_failure_patterns(
 
 
 def _format_step_buffer(buffer: list[dict]) -> str:
-    """Format the unified step buffer into a single context block.
+    """将统一步骤缓冲区格式化为单一上下文块。
 
-    Each entry captures what happened at a previous step: failure patterns
-    observed during rollout, and — when the step was rejected — the specific
-    edits that were tried and the resulting score drop.
+    每条记录描述先前步骤发生的事：rollout 中观察到的失败模式，
+    以及步骤被拒绝时尝试的具体编辑及分数下降。
 
-    Returns empty string when *buffer* is empty.
+    *buffer* 为空时返回空字符串。
     """
     if not buffer:
         return ""
@@ -464,12 +464,12 @@ def _format_step_buffer(buffer: list[dict]) -> str:
 
         parts.append(f"### Step {step} — {action.upper()} ({n_fail}/{n_total} failed)")
 
-        # Failure patterns
+        # 失败模式
         for p in entry.get("failure_patterns", []):
             ids = ", ".join(p["task_ids"][:3])
             parts.append(f'  - "{p["pattern"]}" (×{p["count"]}, tasks: {ids})')
 
-        # Rejected edits (only present on reject)
+        # 被拒绝的编辑（仅 reject 时存在）
         rejected = entry.get("rejected_edits", [])
         if rejected:
             score_before = entry.get("score_before", "?")
@@ -495,18 +495,17 @@ def _format_step_buffer(buffer: list[dict]) -> str:
     return "\n".join(parts)
 
 
-# ── Trainer ──────────────────────────────────────────────────────────────────
+# ── 训练器 ────────────────────────────────────────────────────────────────────
 
 class ReflACTTrainer:
-    """Main ReflACT training loop.
+    """主 ReflACT 训练循环。
 
     Parameters
     ----------
     cfg : dict
-        Configuration dictionary. See ``configs/alfworld_default.yaml``
-        for the full list of keys.
+        配置字典，完整键列表见 ``configs/alfworld_default.yaml``。
     adapter : EnvAdapter
-        Environment adapter instance.
+        环境适配器实例。
     """
 
     def __init__(self, cfg: dict, adapter: EnvAdapter) -> None:
@@ -514,13 +513,13 @@ class ReflACTTrainer:
         self.adapter = adapter
 
     def train(self) -> dict:
-        """Execute the full ReflACT training loop. Returns summary dict."""
+        """执行完整 ReflACT 训练循环，返回 summary 字典。"""
         cfg = self.cfg
         adapter = self.adapter
         out_root = cfg["out_root"]
         os.makedirs(out_root, exist_ok=True)
 
-        # ── Adapter setup (one-time init) ────────────────────────────
+        # ── 适配器初始化（一次性）────────────────────────────────────
         adapter.setup(cfg)
         dataloader = adapter.get_dataloader()
 
@@ -548,7 +547,7 @@ class ReflACTTrainer:
             env_manager = adapter.build_env_from_batch(batch, out_root=out_root)
             return env_manager, batch.batch_size
 
-        # ── Configure models ─────────────────────────────────────────────
+        # ── 配置模型 ─────────────────────────────────────────────────────
         backend = cfg.get("model_backend", "azure_openai")
         configure_azure_openai(
             endpoint=(
@@ -650,7 +649,7 @@ class ReflACTTrainer:
             f"reasoning={reasoning or 'off'}"
         )
 
-        # ── Initialize Ray ───────────────────────────────────────────────
+        # ── 初始化 Ray ───────────────────────────────────────────────────
         if adapter.requires_ray():
             try:
                 import ray
@@ -662,7 +661,7 @@ class ReflACTTrainer:
             if not ray.is_initialized():
                 ray.init(num_gpus=0)
 
-        # ── Load initial skill ───────────────────────────────────────────
+        # ── 加载初始 skill ───────────────────────────────────────────────
         skill_init_path = os.path.abspath(cfg["skill_init"])
         if os.path.exists(skill_init_path):
             with open(skill_init_path) as f:
@@ -672,7 +671,7 @@ class ReflACTTrainer:
             skill_init = ""
             print("  [initial skill] no initial skill file — starting from blank")
 
-        # ── Training parameters ──────────────────────────────────────────
+        # ── 训练参数 ─────────────────────────────────────────────────────
         batch_size = cfg["batch_size"]
         num_epochs = cfg["num_epochs"]
         accumulation = cfg["accumulation"]
@@ -700,8 +699,8 @@ class ReflACTTrainer:
         batches_per_epoch = steps_per_epoch * accumulation
         total_steps = num_epochs * steps_per_epoch
 
-        # Persist resolved derived fields so config.json / summary.json match
-        # the actual runtime recipe.
+        # 持久化派生字段，使 config.json / summary.json 与运行时一致
+        # 与实际运行配方一致。
         cfg["train_size"] = train_size
         cfg["steps_per_epoch"] = steps_per_epoch
         cfg["batches_per_epoch"] = batches_per_epoch
@@ -709,7 +708,7 @@ class ReflACTTrainer:
         cfg["skill_update_mode"] = update_mode
         cfg["lr_control_mode"] = lr_control_mode
 
-        # Save config after deriving runtime values.
+        # 派生运行时值后保存配置。
         with open(os.path.join(out_root, "config.json"), "w") as f:
             json.dump(_redact_cfg(cfg), f, indent=2, ensure_ascii=False)
 
@@ -722,7 +721,7 @@ class ReflACTTrainer:
             total_steps=total_steps,
         )
 
-        # Fixed training pool: base seeds (each seed = one deterministic batch)
+        # 固定训练池：base_seeds（每个 seed 对应一个确定性 batch）
         if dataloader is not None:
             base_seeds = dataloader.make_base_seeds(
                 steps_per_epoch=steps_per_epoch,
@@ -749,7 +748,7 @@ class ReflACTTrainer:
         print(f"  [config] longitudinal_pair_policy={longitudinal_pair_policy}")
         print(f"  [config] base_seeds={base_seeds}")
 
-        # ── Resume check ─────────────────────────────────────────────────
+        # ── 断点续训检查 ─────────────────────────────────────────────────
         history = _load_history(out_root)
         runtime_state = _load_runtime_state(out_root)
         if runtime_state:
@@ -832,14 +831,14 @@ class ReflACTTrainer:
                 },
             )
 
-        # ── Selection cache ──────────────────────────────────────────────
+        # ── 筛选集缓存 ───────────────────────────────────────────────────
         sel_cache: dict[str, tuple[float, float]] = {}
         for rec in history:
             sh = rec.get("candidate_hash", "")
             if sh and rec.get("selection_hard") is not None:
                 sel_cache[sh] = (rec["selection_hard"], rec["selection_soft"])
 
-        # ── Baseline evaluation on selection set ─────────────────────────
+        # ── 筛选集基线评估 ───────────────────────────────────────────────
         if cfg.get("use_gate") is False:
             raise ValueError(
                 "Gate validation is mandatory in this branch. Remove "
@@ -869,7 +868,7 @@ class ReflACTTrainer:
                 f"soft={baseline_soft:.4f}"
             )
 
-        # ── Training loop ────────────────────────────────────────────────
+        # ── 训练循环 ─────────────────────────────────────────────────────
         t_loop_start = time.time()
 
         if resume_from > total_steps:
@@ -893,8 +892,8 @@ class ReflACTTrainer:
                 shuffled_seeds = base_seeds.copy()
                 epoch_rng.shuffle(shuffled_seeds)
 
-            # Step buffer: accumulates per-step context (failure patterns +
-            # rejected edits) within this epoch so optimizers see full history.
+            # 步骤缓冲区：在本 epoch 内累积逐步上下文（失败模式 +
+            # 被拒绝的编辑），供优化器看到完整历史。
             step_buffer: list[dict] = []
             active_meta_skill = (
                 _load_meta_skill_content(out_root, epoch - 1)
@@ -937,7 +936,7 @@ class ReflACTTrainer:
                     "tokens": {},
                 }
 
-                # ── Accumulation: Rollout + Reflect ──────────────────────
+                # ── 梯度累积：推演 + 反思 ────────────────────────────────
                 all_failure_patches: list[dict] = []
                 all_success_patches: list[dict] = []
                 all_raw_patches: list[dict | None] = []
@@ -960,7 +959,7 @@ class ReflACTTrainer:
                         )
                         train_n = len(train_env) if hasattr(train_env, "__len__") else batch_size
 
-                    # Directory routing
+                    # 目录路由
                     if accumulation > 1:
                         batch_dir = os.path.join(step_dir, f"batch_{a}")
                     else:
@@ -969,7 +968,7 @@ class ReflACTTrainer:
                     rollout_dir = os.path.join(batch_dir, "rollout")
                     patches_dir = os.path.join(batch_dir, "patches")
 
-                    # ① ROLLOUT ────────────────────────────────────────────
+                    # ① 推演 ─────────────────────────────────────────────────
                     t_phase = time.time()
                     print(f"    [1/6 ROLLOUT] train items={train_n} (from pool, batch_seed={batch_seed})")
                     rollout_results = adapter.rollout(
@@ -981,11 +980,11 @@ class ReflACTTrainer:
                     all_rollout_results.extend(rollout_results)
                     print(f"    [1/6 done] hard={r_hard:.4f} soft={r_soft:.4f}")
 
-                    # ② REFLECT ────────────────────────────────────────────
+                    # ② 反思 ─────────────────────────────────────────────────
                     t_phase = time.time()
                     pred_dir = os.path.join(rollout_dir, "predictions")
 
-                    # Build step context from buffer
+                    # 从缓冲区构建步骤上下文
                     step_buffer_context = _format_step_buffer(step_buffer)
 
                     raw_patches = adapter.reflect(
@@ -1009,7 +1008,7 @@ class ReflACTTrainer:
                         f"success_patches={len(success_patches)}"
                     )
 
-                    # Track per-batch stats
+                    # 记录每 batch 统计
                     accum_rollout_stats.append({
                         "batch_idx": a,
                         "batch_seed": batch_seed,
@@ -1020,9 +1019,9 @@ class ReflACTTrainer:
                         "n_success_patches": len(success_patches),
                     })
 
-                # ── End of accumulation loop ─────────────────────────────
+                # ── 梯度累积循环结束 ─────────────────────────────────────
 
-                # Aggregate rollout stats across batches
+                # 跨 batch 聚合 rollout 统计
                 total_n = sum(b["n_envs"] for b in accum_rollout_stats)
                 agg_hard = sum(b["hard"] * b["n_envs"] for b in accum_rollout_stats) / max(total_n, 1)
                 agg_soft = sum(b["soft"] * b["n_envs"] for b in accum_rollout_stats) / max(total_n, 1)
@@ -1046,7 +1045,7 @@ class ReflACTTrainer:
                         f"from {accumulation} batches"
                     )
 
-                # ── No patches? Skip ─────────────────────────────────────
+                # ── 无 patch？跳过 ───────────────────────────────────────
                 if not all_failure_patches and not all_success_patches:
                     step_rec["action"] = "skip_no_patches"
                     step_rec["current_score"] = current_score
@@ -1063,7 +1062,7 @@ class ReflACTTrainer:
                     print("    [skip] no usable patches — skill unchanged")
                     continue
 
-                # ③ AGGREGATE ──────────────────────────────────────────────
+                # ③ 聚合 ─────────────────────────────────────────────────
                 t_phase = time.time()
                 merged_patch = merge_patches(
                     current_skill, all_failure_patches, all_success_patches,
@@ -1081,7 +1080,7 @@ class ReflACTTrainer:
                 step_rec["timing"]["aggregate_s"] = round(time.time() - t_phase, 1)
                 print(f"    [3/6 done] merged {n_edits_merged} {payload_label(update_mode)}")
 
-                # ④ SELECT ─────────────────────────────────────────────────
+                # ④ 筛选 ─────────────────────────────────────────────────
                 t_phase = time.time()
                 lr_decision = None
                 if is_full_rewrite_minibatch_mode(update_mode):
@@ -1151,7 +1150,7 @@ class ReflACTTrainer:
                         f"(budget={edit_budget}, lr_control={lr_control_mode})"
                     )
 
-                # ⑤ UPDATE ─────────────────────────────────────────────────
+                # ⑤ 更新 ─────────────────────────────────────────────────
                 t_phase = time.time()
                 rewrite_result = None
                 if update_mode == "rewrite_from_suggestions":
@@ -1255,7 +1254,7 @@ class ReflACTTrainer:
                     f"skill_len {len(current_skill)} -> {len(candidate_skill)}"
                 )
 
-                # ⑥ EVALUATE ───────────────────────────────────────────────
+                # ⑥ 评估 ─────────────────────────────────────────────────
                 t_phase = time.time()
                 if cand_hash in sel_cache:
                     cand_hard, cand_soft = sel_cache[cand_hash]
@@ -1319,7 +1318,7 @@ class ReflACTTrainer:
 
                 step_rec["timing"]["evaluate_s"] = round(time.time() - t_phase, 1)
 
-                # ── Step buffer: unified failure patterns + rejected edits ─
+                # ── 步骤缓冲区：统一失败模式 + 被拒绝的编辑 ───────────────
                 action = step_rec.get("action", "unknown")
                 n_total = len(all_rollout_results) or 1
                 n_fail = sum(1 for r in all_rollout_results if not r.get("hard"))
@@ -1335,7 +1334,7 @@ class ReflACTTrainer:
                     "failure_patterns": failure_patterns,
                 }
 
-                # Attach rejected edits when the step was rejected
+                # 步骤被拒绝时附加被拒绝的编辑
                 if "reject" in action and ranked_patch:
                     rejected_edits = [
                         short_item_summary(item, update_mode)
@@ -1348,12 +1347,12 @@ class ReflACTTrainer:
 
                 step_buffer.append(buf_entry)
 
-                # Persist step digest for step buffer context
+                # 持久化步骤摘要，供步骤缓冲区上下文使用
                 digest_path = os.path.join(step_dir, "trajectory_digest.json")
                 with open(digest_path, "w") as f:
                     json.dump(buf_entry, f, indent=2, ensure_ascii=False)
 
-                # ── Token snapshot ───────────────────────────────────────
+                # ── Token 快照 ───────────────────────────────────────────
                 tokens_after = get_token_summary()
                 step_tokens: dict = {}
                 for stage in tokens_after:
@@ -1370,7 +1369,7 @@ class ReflACTTrainer:
                     }
                 step_rec["tokens"] = step_tokens
 
-                # ── Save state ───────────────────────────────────────────
+                # ── 保存状态 ─────────────────────────────────────────────
                 step_rec["current_score"] = current_score
                 step_rec["best_score"] = best_score
                 step_rec["best_step"] = best_step
@@ -1404,14 +1403,14 @@ class ReflACTTrainer:
             epoch_last_step_skill = current_skill
             epoch_comparison_pairs: list[dict] | None = None
 
-            # ── SLOW UPDATE (end of epoch) ──────────────────────────────
+            # ── 慢更新（epoch 末）────────────────────────────────────────
             use_slow = cfg.get("use_slow_update", False)
             if use_slow:
                 slow_dir = os.path.join(out_root, "slow_update", f"epoch_{epoch:02d}")
                 slow_done_path = os.path.join(slow_dir, "slow_result.json")
 
                 if os.path.exists(slow_done_path):
-                    # Resume support
+                    # 断点续训支持
                     print(
                         f"\n  [SLOW UPDATE epoch {epoch}] "
                         f"resumed — already done"
@@ -1439,7 +1438,7 @@ class ReflACTTrainer:
                             best_skill, slow_saved["slow_update_content"],
                         )
                 elif epoch == 1:
-                    # Epoch 1: inject empty placeholder
+                    # Epoch 1：注入空占位符
                     os.makedirs(slow_dir, exist_ok=True)
                     current_skill = inject_empty_slow_update_field(current_skill)
                     current_origin = f"slow_update_placeholder_epoch_{epoch:02d}"
@@ -1454,7 +1453,7 @@ class ReflACTTrainer:
                         f"injected empty placeholder"
                     )
                 else:
-                    # Epoch 2+: longitudinal comparison
+                    # Epoch 2+：纵向对比
                     os.makedirs(slow_dir, exist_ok=True)
                     print(
                         f"\n  {'='*60}\n"
@@ -1463,14 +1462,14 @@ class ReflACTTrainer:
                         f"  {'='*60}"
                     )
 
-                    # 1. Get skill from last step of previous epoch
+                    # 1. 取上一 epoch 最后一步的 skill
                     prev_epoch_records = [
                         h for h in history if h.get("epoch") == epoch - 1
                     ]
                     prev_epoch_last_step = prev_epoch_records[-1]["step"]
                     prev_skill = _load_skill(out_root, prev_epoch_last_step)
 
-                    # 2. Sample items from train set
+                    # 2. 从训练集采样条目
                     slow_n = cfg.get("slow_update_samples", 20)
                     slow_seed = seed + epoch * 2000
                     if dataloader is not None:
@@ -1491,7 +1490,7 @@ class ReflACTTrainer:
                     slow_items = list(slow_env) if hasattr(slow_env, "__iter__") else slow_env
                     print(f"    [slow update] sampled {len(slow_items)} train items (seed={slow_seed})")
 
-                    # 3. Rollout with both skills
+                    # 3. 用两个 skill 做 rollout
                     t_slow = time.time()
                     prev_rollout_dir = os.path.join(slow_dir, "rollout_prev")
                     curr_rollout_dir = os.path.join(slow_dir, "rollout_curr")
@@ -1505,7 +1504,7 @@ class ReflACTTrainer:
                         f"curr epoch hard={curr_hard:.4f}"
                     )
 
-                    # 4. Build and save structured comparison pairs
+                    # 4. 构建并保存结构化对比对
                     comparison_pairs, all_comparison_pairs = _build_longitudinal_pairs(
                         adapter=adapter,
                         dataloader=dataloader,
@@ -1543,10 +1542,10 @@ class ReflACTTrainer:
                         f"kept={len(comparison_pairs)}/{len(all_comparison_pairs)}"
                     )
 
-                    # 5. Extract previous slow update guidance for reflection
+                    # 5. 提取上一轮 slow update 指导供反思
                     existing_guidance = extract_slow_update_field(current_skill)
 
-                    # 6. Optimizer analysis (with reflection on previous guidance)
+                    # 6. 优化器分析（结合上一轮指导反思）
                     slow_result = run_slow_update(
                         current_skill,
                         results_prev,
@@ -1577,11 +1576,8 @@ class ReflACTTrainer:
                             "observed across adjacent epochs."
                         )
 
-                        # Slow update field is force-updated into both
-                        # current_skill and best_skill unconditionally.
-                        # The epoch-level longitudinal guidance should always
-                        # persist — it must not be gated by step-level
-                        # selection scores.
+                        # slow update 字段无条件强制写入 current_skill 与 best_skill；
+                        # epoch 级纵向指导应始终保留，不得被步骤级筛选分数门控。
                         slow_content = slow_result["slow_update_content"]
                         current_skill = replace_slow_update_field(
                             current_skill, slow_content,
@@ -1589,8 +1585,8 @@ class ReflACTTrainer:
                         best_skill = replace_slow_update_field(
                             best_skill, slow_content,
                         )
-                        # Update caches so downstream steps use the
-                        # slow-update-injected skill for hashing.
+                        # 更新缓存，使后续步骤使用
+                        # 已注入 slow update 的 skill 做哈希。
                         slow_candidate_hash = skill_hash(current_skill)
                         sel_cache[slow_candidate_hash] = (current_score, 0.0)
 
@@ -1611,7 +1607,7 @@ class ReflACTTrainer:
                             f"{slow_time}s"
                         )
 
-                    # 5. Save
+                    # 5. 保存
                     with open(slow_done_path, "w") as f:
                         json.dump(slow_result, f, indent=2, ensure_ascii=False)
                     _save_skill(out_root, global_step, current_skill)
@@ -1624,7 +1620,7 @@ class ReflACTTrainer:
                         f"current={current_score:.4f} best={best_score:.4f}"
                     )
 
-            # ── META SKILL (end of epoch, optimizer-side memory) ─────────
+            # ── 元 Skill（epoch 末，优化器侧记忆）────────────────────────
             use_meta_skill = cfg.get("use_meta_skill", False)
             if use_meta_skill:
                 meta_skill_dir = os.path.join(out_root, "meta_skill", f"epoch_{epoch:02d}")
@@ -1737,7 +1733,7 @@ class ReflACTTrainer:
                     with open(meta_skill_done_path, "w") as f:
                         json.dump(meta_skill_result, f, indent=2, ensure_ascii=False)
 
-        # ── Save best skill ──────────────────────────────────────────────
+        # ── 保存最佳 skill ─────────────────────────────────────────────────
         with open(os.path.join(out_root, "best_skill.md"), "w") as f:
             f.write(best_skill)
         _persist_runtime_state(global_step)
@@ -1746,7 +1742,7 @@ class ReflACTTrainer:
             f"score={best_score:.4f}"
         )
 
-        # ── Final test evaluation (valid_unseen) ─────────────────────────
+        # ── 最终测试评估（valid_unseen）──────────────────────────────────
         baseline_test_hard = None
         baseline_test_soft = None
         test_hard = None
@@ -1755,7 +1751,7 @@ class ReflACTTrainer:
         if cfg["eval_test"]:
             task_types = adapter.get_task_types()
 
-            # Baseline: S_0 on test set (valid_unseen)
+            # 基线：测试集上的 S_0（valid_unseen）
             print(f"\n{'='*60}")
             print("  BASELINE TEST — evaluate initial skill on Test set (valid_unseen)")
             print(f"{'='*60}")
@@ -1789,7 +1785,7 @@ class ReflACTTrainer:
                     f, indent=2, ensure_ascii=False,
                 )
 
-            # Best skill on test set
+            # 测试集上的最佳 skill
             print(f"\n{'='*60}")
             print("  BEST SKILL TEST — evaluate best skill on Test set (valid_unseen)")
             print(f"{'='*60}")
@@ -1823,7 +1819,7 @@ class ReflACTTrainer:
                     f, indent=2, ensure_ascii=False,
                 )
 
-            # Comparison
+            # 对比
             delta_hard = (test_hard or 0) - (baseline_test_hard or 0)
             print(f"\n  === Improvement (best vs baseline) ===")
             print(
@@ -1831,7 +1827,7 @@ class ReflACTTrainer:
                 f"(delta={delta_hard:+.4f})"
             )
 
-        # ── Global summary ───────────────────────────────────────────────
+        # ── 全局摘要 ─────────────────────────────────────────────────────
         total_wall = time.time() - t_loop_start
         n_accept = sum(1 for h in history if "accept" in h.get("action", ""))
         n_reject = sum(1 for h in history if h.get("action") == "reject")
@@ -1839,7 +1835,7 @@ class ReflACTTrainer:
 
         token_summary = get_token_summary()
 
-        # Epoch-level statistics
+        # Epoch 级统计
         epoch_stats = []
         for e in range(1, num_epochs + 1):
             epoch_records = [h for h in history if h.get("epoch") == e]

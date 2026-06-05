@@ -1,12 +1,11 @@
-"""Prompt loading utilities for ReflACT.
+"""【功能描述】ReflACT 提示词加载：从 `.md` 文件按名称加载，支持环境级覆盖与通用回退。
+【输入】提示词名称 `name`、可选环境名 `env`。
+【输出】提示词 Markdown 字符串；`clear_cache()` 清空文件缓存。
 
-Prompts are stored as ``.md`` files and loaded at runtime:
+- **通用** 提示词：`skillopt/prompts/*.md`
+- **环境专属** 提示词：`skillopt/envs/<env>/prompts/*.md`
 
-- **Generic** prompts live in ``skillopt/prompts/*.md``
-- **Env-specific** prompts live in ``skillopt/envs/<env>/prompts/*.md``
-
-``load_prompt(name, env)`` tries the env-specific path first, then falls
-back to the generic default.
+`load_prompt(name, env)` 先查环境路径，再回退到通用默认。
 """
 from __future__ import annotations
 
@@ -30,13 +29,13 @@ def _read_file(path: str) -> str | None:
 
 
 def load_prompt(name: str, env: str | None = None) -> str:
-    """Load a prompt by name with env-specific override and generic fallback.
+    """按名称加载提示词，支持环境覆盖与通用回退。
 
-    Lookup order:
-      1. ``skillopt/envs/{env}/prompts/{name}.md``  (if *env* given)
-      2. ``skillopt/prompts/{name}.md``              (generic default)
+    查找顺序：
+      1. ``skillopt/envs/{env}/prompts/{name}.md``  （若提供 *env*）
+      2. ``skillopt/prompts/{name}.md``              （通用默认）
 
-    Raises ``FileNotFoundError`` if neither path exists.
+    若两处均不存在则抛出 ``FileNotFoundError``。
     """
     if env is not None:
         env_path = os.path.join(_REFLACT_DIR, "envs", env, "prompts", f"{name}.md")
@@ -59,5 +58,5 @@ def load_prompt(name: str, env: str | None = None) -> str:
 
 
 def clear_cache() -> None:
-    """Clear the prompt file cache (useful for testing)."""
+    """清空提示词文件缓存（测试时有用）。"""
     _cache.clear()

@@ -1,4 +1,8 @@
-"""Claude CLI chat backend for ReflACT."""
+"""
+【功能描述】ReflACT 的 Claude CLI 对话后端。
+【输入】消息列表、工具定义、部署名、环境变量（CLAUDE_CLI_BIN 等）。
+【输出】模型文本或 CompatAssistantMessage、按 stage 记录的 token 用量。
+"""
 from __future__ import annotations
 
 import base64

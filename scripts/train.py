@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""SkillOpt unified training entry point.
+"""【功能描述】SkillOpt 统一训练入口，加载配置并启动 ReflACT 训练循环。
+【输入】命令行参数（--config、--cfg-options 及遗留扁平覆盖项）、YAML 配置文件。
+【输出】在 out_root 下写入训练产物与 summary；控制台打印运行摘要。
 
-Usage
+用法
 -----
     python scripts/train.py --config configs/t2i/default.yaml
 
-Any YAML key can be overridden from the command line::
+任意 YAML 键均可从命令行覆盖::
 
     python scripts/train.py --config configs/t2i/default.yaml \\
         --batch_size 40 --num_epochs 2 --seed 123
 
-Run ``python scripts/train.py --help`` for a full list of options.
+运行 ``python scripts/train.py --help`` 查看完整选项列表。
 """
 from __future__ import annotations
 
@@ -19,8 +21,7 @@ import datetime
 import os
 import sys
 
-# Ensure the project root is on sys.path so ``import skillopt`` works
-# regardless of where the script is invoked from.
+# 将项目根目录加入 sys.path，以便无论从何处调用脚本都能 ``import skillopt``
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
 if _PROJECT_ROOT not in sys.path:
@@ -34,7 +35,7 @@ _OPENAI_DEFAULT_MODEL_SENTINELS = {"gpt-5.4", "gpt-5.5"}
 from skillopt.envs.registry import get_adapter  # noqa: E402
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
+# ── 命令行接口 ──────────────────────────────────────────────────────────────
 
 _BOOL = lambda x: x.lower() in ("true", "1", "yes")  # noqa: E731
 
@@ -50,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cfg-options", nargs="+", default=[],
                    help="Override config: section.key=value (e.g. train.batch_size=40)")
 
-    # Legacy flat CLI overrides (still work, prefer --cfg-options for new usage)
+    # 遗留扁平 CLI 覆盖（仍可用，新用法优先 --cfg-options）
     p.add_argument("--env", type=str)
     p.add_argument("--backend", type=str,
                    choices=["azure_openai", "codex", "codex_exec", "claude", "claude_chat", "claude_code_exec", "qwen", "qwen_chat"])
@@ -167,7 +168,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# ── Flat key → structured path mapping (for legacy CLI → structured config) ──
+# ── 扁平键 → 结构化路径映射（遗留 CLI → 结构化配置）────────────────────────
 
 _LEGACY_TO_STRUCTURED: dict[str, str] = {
     "backend": "model.backend",
@@ -251,13 +252,13 @@ _LEGACY_TO_STRUCTURED: dict[str, str] = {
 
 
 def load_config(args: argparse.Namespace) -> dict:
-    """Load config with _base_ inheritance, then apply CLI overrides."""
+    """加载含 _base_ 继承的配置，再应用 CLI 覆盖。"""
     from skillopt.config import load_config as _load, flatten_config, is_structured
 
     cfg = _load(args.config, overrides=args.cfg_options)
     structured = is_structured(cfg)
 
-    # Apply legacy --key value overrides
+    # 应用遗留 --key value 覆盖
     cli = {k: v for k, v in vars(args).items()
            if v is not None and k not in ("config", "cfg_options")}
     if cli:
@@ -274,7 +275,7 @@ def load_config(args: argparse.Namespace) -> dict:
         else:
             cfg.update(cli)
 
-    # Flatten structured config → flat dict for trainer/adapter
+    # 结构化配置展平为 flat dict，供 trainer/adapter 使用
     flat = flatten_config(cfg) if structured else cfg
 
     for new_key, old_key in (
@@ -351,7 +352,7 @@ def load_config(args: argparse.Namespace) -> dict:
         ):
             flat["target_model"] = default_model_for_backend("qwen_chat")
 
-    # Auto-generate output root
+    # 自动生成输出根目录
     if not flat.get("out_root"):
         env = flat.get("env", "unknown")
         model = flat.get("optimizer_model", "unknown").replace("/", "-")
@@ -362,7 +363,7 @@ def load_config(args: argparse.Namespace) -> dict:
     return flat
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── 主入口 ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     args = parse_args()
@@ -393,10 +394,10 @@ def main() -> None:
     print(f"  out_root:       {cfg.get('out_root')}")
     print(f"{'='*60}\n")
 
-    # Build adapter
+    # 构建 adapter
     adapter = get_adapter(cfg)
 
-    # Build trainer and run
+    # 构建 trainer 并运行
     from skillopt.engine.trainer import ReflACTTrainer
     trainer = ReflACTTrainer(cfg, adapter)
     summary = trainer.train()

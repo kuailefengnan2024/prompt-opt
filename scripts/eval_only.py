@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""SkillOpt eval-only: run a single skill on a dataset without training.
+"""【功能描述】SkillOpt 仅评估模式：在数据集上运行指定 skill，不执行训练。
+【输入】命令行参数（--config、--skill、--split、--cfg-options 等）、YAML 配置与 skill .md 文件路径。
+【输出】rollout 结果与 eval_summary.json 写入 out_root；控制台打印 hard/soft 分数。
 
-Usage
+用法
 -----
-    python scripts/eval_only.py \
-        --config configs/t2i/default.yaml \
-        --skill skillopt/envs/t2i/skills/initial.md \
-        --split_dir /path/to/split \
+    python scripts/eval_only.py \\
+        --config configs/t2i/default.yaml \\
+        --skill skillopt/envs/t2i/skills/initial.md \\
+        --split_dir /path/to/split \\
         --out_root outputs/eval_skill0
 
-All YAML keys can be overridden from the CLI, same as train.py.
+所有 YAML 键均可从 CLI 覆盖，与 train.py 相同。
 """
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ from skillopt.utils import compute_score
 from skillopt.envs.registry import get_adapter  # noqa: E402
 
 
-# ── CLI ────────────────────────────────────────────────────────────────────
+# ── 命令行接口 ────────────────────────────────────────────────────────────
 
 _BOOL = lambda x: str(x).lower() in ("true", "1", "yes")  # noqa: E731
 
@@ -57,7 +59,7 @@ def parse_args() -> argparse.Namespace:
                    help="Which split to eval: train/valid_seen/valid_unseen/all (default: all)")
     p.add_argument("--cfg-options", nargs="+", default=[],
                    help="Override config: section.key=value")
-    # Legacy flat overrides
+    # 遗留扁平覆盖
     p.add_argument("--env", type=str)
     p.add_argument("--backend", type=str,
                    choices=["azure_openai", "codex", "codex_exec", "claude", "claude_chat", "claude_code_exec"])
@@ -129,7 +131,7 @@ def main() -> None:
     cfg = _load(args.config, overrides=args.cfg_options)
     structured = is_structured(cfg)
 
-    # Apply legacy --key value overrides
+    # 应用遗留 --key value 覆盖
     cli = {k: v for k, v in vars(args).items()
            if v is not None and k not in ("config", "skill", "split", "cfg_options")}
     if cli:
@@ -271,13 +273,13 @@ def main() -> None:
     out_root = cfg["out_root"]
     os.makedirs(out_root, exist_ok=True)
 
-    # Load skill
+    # 加载 skill
     skill_path = os.path.abspath(args.skill)
     with open(skill_path) as f:
         skill_content = f.read()
     print(f"  [skill] {skill_path} ({len(skill_content)} chars)")
 
-    # Configure models
+    # 配置模型
     configure_azure_openai(
         endpoint=(cfg.get("azure_openai_endpoint") or cfg.get("azure_endpoint") or None),
         api_version=(cfg.get("azure_openai_api_version") or cfg.get("azure_api_version") or None),
@@ -326,7 +328,7 @@ def main() -> None:
     )
     set_reasoning_effort(cfg.get("reasoning_effort", "") or None)
 
-    # Build adapter
+    # 构建 adapter
     adapter = get_adapter(cfg)
     adapter.setup(cfg)
 
@@ -347,16 +349,16 @@ def main() -> None:
     print(f"  [eval] out_root={out_root}")
     print(f"{'='*60}")
 
-    # Run rollout
+    # 执行 rollout
     results = adapter.rollout(items, skill_content, out_root)
 
-    # Score
+    # 计分
     hard, soft = compute_score(results)
     print(f"\n{'='*60}")
     print(f"  Results: hard={hard:.4f}  soft={soft:.4f}  (n={len(results)})")
     print(f"{'='*60}")
 
-    # Save summary
+    # 保存摘要
     summary = {
         "skill": skill_path,
         "split": split,

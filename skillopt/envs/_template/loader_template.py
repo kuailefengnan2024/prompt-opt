@@ -1,21 +1,19 @@
-"""
-Benchmark Data Loader Template
-================================
-Copy this file and implement the TODO sections to load your benchmark data.
+"""【功能描述】Benchmark 数据加载器模板：复制本文件并实现 TODO 以加载 benchmark 数据。
+【输入】数据目录 `data_dir`、配置 `cfg`（split_mode、比例等）。
+【输出】按 train/valid/test 划分的样本列表，供训练循环通过 `get_split_items` 取用。
 
-The DataLoader is responsible for:
-1. Loading raw data from disk
-2. Splitting into train / validation / test sets
-3. Providing DataItem objects to the training loop
+`DataLoader` 负责：
+1. 从磁盘加载原始数据
+2. 划分为 train / validation / test
+3. 向训练循环提供 DataItem 对象
 """
 from pathlib import Path
 
 
 class TemplateBenchmarkLoader:
-    """
-    Data loader for <Your Benchmark Name>.
-    
-    Rename this class and implement the methods below.
+    """<你的 Benchmark 名称> 的数据加载器。
+
+    重命名本类并实现下方方法。
     """
 
     def __init__(self, data_dir: str = "data/your_benchmark", **kwargs):
@@ -24,18 +22,17 @@ class TemplateBenchmarkLoader:
         self.splits = {}
 
     def setup(self, cfg: dict):
-        """
-        Initialize the loader with config.
-        
-        Called once before training starts.
-        
+        """使用配置初始化加载器。
+
+        训练开始前调用一次。
+
         Args:
-            cfg: Dict with keys like 'split_mode', 'train_ratio', 'val_ratio', etc.
+            cfg: 含 `split_mode`、`train_ratio`、`val_ratio` 等键的字典。
         """
-        # Step 1: Load raw data
+        # 步骤 1：加载原始数据
         self.items = self._load_items()
 
-        # Step 2: Create splits
+        # 步骤 2：创建划分
         split_mode = cfg.get("split_mode", "ratio")
         if split_mode == "ratio":
             self._split_by_ratio(
@@ -46,16 +43,15 @@ class TemplateBenchmarkLoader:
             self._load_predefined_splits(cfg.get("split_dir", self.data_dir))
 
     def _load_items(self) -> list:
-        """
-        Load raw data into structured items.
-        
-        TODO: Implement data loading. Each item should have at minimum:
-        - id: unique identifier
-        - input: the task input (question, instruction, etc.)
-        - ground_truth: the expected answer
-        - metadata: optional dict with extra info
-        
-        Example:
+        """将原始数据加载为结构化条目。
+
+        TODO: 实现数据加载。每条至少包含：
+        - id: 唯一标识
+        - input: 任务输入（问题、指令等）
+        - ground_truth: 期望答案
+        - metadata: 可选附加信息字典
+
+        示例:
             items = []
             for path in self.data_dir.glob("*.json"):
                 data = json.loads(path.read_text())
@@ -71,7 +67,7 @@ class TemplateBenchmarkLoader:
         raise NotImplementedError("Implement _load_items() for your benchmark")
 
     def _split_by_ratio(self, train_ratio: float, val_ratio: float):
-        """Split items by ratio."""
+        """按比例划分条目。"""
         import random
         random.shuffle(self.items)
         n = len(self.items)
@@ -84,19 +80,18 @@ class TemplateBenchmarkLoader:
         }
 
     def _load_predefined_splits(self, split_dir):
-        """Load from pre-split directories."""
-        # TODO: Implement if your benchmark has pre-defined splits
+        """从预划分目录加载。"""
+        # TODO: 若 benchmark 已有预定义划分则在此实现
         raise NotImplementedError
 
     def get_split_items(self, split: str) -> list:
-        """
-        Return items for a given split.
-        
+        """返回指定划分的条目列表。
+
         Args:
-            split: One of "train", "valid", "test"
-            
+            split: ``"train"``、``"valid"`` 或 ``"test"`` 之一
+
         Returns:
-            List of data items for the requested split
+            该划分的 data item 列表
         """
         if split not in self.splits:
             raise ValueError(f"Unknown split '{split}'. Available: {list(self.splits.keys())}")

@@ -1,4 +1,8 @@
-"""Shared model utilities for ReflACT backends."""
+"""
+【功能描述】ReflACT 各后端的共享模型工具。
+【输入】后端名称、OpenAI/Responses API 的 usage 与消息对象。
+【输出】规范化后端名、默认模型、TokenTracker 汇总、兼容的 assistant/tool 消息。
+"""
 from __future__ import annotations
 
 import json

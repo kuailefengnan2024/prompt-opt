@@ -1,4 +1,8 @@
-"""Helpers for running exec backends as the target harness."""
+"""
+【功能描述】将 exec 后端作为目标 harness 运行的辅助工具。
+【输入】工作区路径、skill/task 文本、prompt、模型与超时、后端配置。
+【输出】最终答案文本、原始 trace、工作区产物与 trace 摘要文件。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -272,11 +276,11 @@ def _persist_claude_artifacts(work_dir: str, raw: str, response: str) -> None:
 
 
 def parse_codex_raw(raw: str) -> dict:
-    """Parse raw Codex CLI output into step sections.
+    """将 Codex CLI 原始输出解析为分步区段。
 
-    Returns a dict with:
-    - ``steps``: ordered sections beginning at the first ``user/codex/exec`` marker
-    - ``trace_body``: raw trace starting at the first marker
+    返回字典包含：
+    - ``steps``：从首个 ``user/codex/exec`` 标记起的有序区段
+    - ``trace_body``：从首个标记起的原始 trace
     """
     lines = (raw or "").splitlines()
     markers = {"user", "codex", "exec"}
@@ -318,7 +322,7 @@ def parse_codex_raw(raw: str) -> dict:
 
 
 def format_codex_trace_steps(raw: str, *, max_chars: int = 4000) -> str:
-    """Render parsed Codex trace into numbered compact steps for optimizer prompts."""
+    """将解析后的 Codex trace 渲染为编号紧凑步骤，供优化器 prompt 使用。"""
     parsed = parse_codex_raw(raw)
     steps = parsed["steps"]
     if not steps:
@@ -352,9 +356,9 @@ def format_codex_trace_steps(raw: str, *, max_chars: int = 4000) -> str:
 
 
 def extract_codex_trace_prefix(raw: str, *, after_step: int) -> str:
-    """Return raw trace body up to and including ``after_step``.
+    """返回截至并包含 ``after_step`` 的原始 trace 正文。
 
-    ``after_step <= 0`` yields an empty string.
+    ``after_step <= 0`` 时返回空字符串。
     """
     if after_step <= 0:
         return ""
@@ -495,7 +499,7 @@ def _retry_prompt(prompt: str, attempt: int) -> str:
 
 
 def _normalize_target_exec_prompt(prompt: str) -> str:
-    """Avoid wording that makes Claude Code call an unregistered Skill tool."""
+    """避免措辞导致 Claude Code 调用未注册的 Skill 工具。"""
     text = prompt or ""
     replacements = {
         "Use the `skillopt-target` skill available in this workspace.": (
@@ -533,7 +537,7 @@ def _structured_response(data: Any) -> tuple[str, str]:
 
 
 def _extract_claude_structured_output(messages: list[Any]) -> Any:
-    """Claude Code SDK can finish with error_during_execution after StructuredOutput."""
+    """Claude Code SDK 可能在 StructuredOutput 之后以 error_during_execution 结束。"""
     for msg in reversed(messages):
         structured = getattr(msg, "structured_output", None)
         if isinstance(structured, dict):

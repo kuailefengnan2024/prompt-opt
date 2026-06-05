@@ -11,11 +11,11 @@
         def build_eval_env(self, env_num, split, seed, **kw):
             return MyEnvManager(split=split, n=env_num, seed=seed)
 
-        def rollout(self, env_manager, skill_content, out_dir, **kw):
+        def rollout(self, env_manager, prompt_content, out_dir, **kw):
             # 运行 episode，返回 [{"id": ..., "hard": 0/1, "soft": 0.0-1.0, ...}]
             ...
 
-        def reflect(self, results, skill_content, out_dir, **kw):
+        def reflect(self, results, prompt_content, out_dir, **kw):
             # 分析轨迹，返回 patch dict 列表
             ...
 
@@ -212,11 +212,11 @@ class EnvAdapter(ABC):
     def rollout(
         self,
         env_manager,
-        skill_content: str,
+        prompt_content: str,
         out_dir: str,
         **kwargs,
     ) -> list[dict]:
-        """使用当前 skill 运行一批 episode。
+        """使用当前 prompt 运行一批 episode。
 
         Returns
         -------
@@ -230,7 +230,7 @@ class EnvAdapter(ABC):
     def reflect(
         self,
         results: list[dict],
-        skill_content: str,
+        prompt_content: str,
         out_dir: str,
         **kwargs,
     ) -> list[dict | None]:
@@ -278,7 +278,7 @@ class EnvAdapter(ABC):
             return None
 
     def get_error_minibatch_prompt(self) -> str | None:
-        update_mode = getattr(self, "_cfg", {}).get("skill_update_mode", "patch")
+        update_mode = getattr(self, "_cfg", {}).get("prompt_update_mode", "patch")
         raw_mode = str(update_mode).strip().lower()
         if raw_mode in {"full_rewrite", "full_rewrite_minibatch", "minibatch_full_rewrite", "skill_rewrite_minibatch"}:
             prompt = self._load_env_prompt("analyst_error_full_rewrite")
@@ -291,7 +291,7 @@ class EnvAdapter(ABC):
         return self._load_env_prompt("analyst_error")
 
     def get_success_minibatch_prompt(self) -> str | None:
-        update_mode = getattr(self, "_cfg", {}).get("skill_update_mode", "patch")
+        update_mode = getattr(self, "_cfg", {}).get("prompt_update_mode", "patch")
         raw_mode = str(update_mode).strip().lower()
         if raw_mode in {"full_rewrite", "full_rewrite_minibatch", "minibatch_full_rewrite", "skill_rewrite_minibatch"}:
             prompt = self._load_env_prompt("analyst_success_full_rewrite")

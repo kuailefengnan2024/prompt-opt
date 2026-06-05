@@ -31,7 +31,7 @@ optimizer:
   learning_rate: 4                # Max edits per step (edit budget)
   lr_scheduler: cosine            # cosine | linear | constant | autonomous
   use_slow_update: true           # Epoch-boundary momentum
-  use_meta_skill: true            # Cross-epoch optimizer memory
+  use_meta_prompt: true            # Cross-epoch optimizer memory
 
 # ── Evaluation ───────────────────────────────────
 evaluation:

@@ -1,8 +1,8 @@
 """【功能描述】由优化器驱动的完整 skill 重写，基于选中的 revise_suggestions 生成新 skill 文档。
 
-【输入】skill_content、patch（含 suggestions）、可选 system_prompt、step_buffer_context、env 等。
+【输入】prompt_content、patch（含 suggestions）、可选 system_prompt、step_buffer_context、env 等。
 
-【输出】含 new_skill 与 change_summary 的结果 dict，失败时返回 None。
+【输出】含 new_prompt 与 change_summary 的结果 dict，失败时返回 None。
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from skillopt.optimizer.update_modes import get_payload_items
 from skillopt.utils import extract_json
 
 
-def rewrite_skill_from_suggestions(
-    skill_content: str,
+def rewrite_prompt_from_suggestions(
+    prompt_content: str,
     patch: dict,
     *,
     system_prompt: str | None = None,
@@ -29,19 +29,19 @@ def rewrite_skill_from_suggestions(
         return None
 
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Prompt\n{prompt_content}\n\n"
         f"## Selected Revise Suggestions ({len(suggestions)} total)\n"
         f"{json.dumps(suggestions, ensure_ascii=False, indent=2)}\n\n"
     )
     if step_buffer_context.strip():
         user += f"## Previous Steps in This Epoch\n{step_buffer_context}\n\n"
     user += (
-        "Rewrite the full skill document so it integrates the selected suggestions. "
-        "Return the complete new skill in `new_skill`."
+        "Rewrite the full prompt document so it integrates the selected suggestions. "
+        "Return the complete new prompt in `new_prompt`."
     )
 
     actual_system = system_prompt if system_prompt is not None else load_prompt(
-        "rewrite_skill", env=env,
+        "rewrite_prompt", env=env,
     )
 
     try:
@@ -54,8 +54,8 @@ def rewrite_skill_from_suggestions(
             reasoning_effort=reasoning_effort,
         )
         result = extract_json(response)
-        if result and str(result.get("new_skill", "")).strip():
-            result["new_skill"] = str(result["new_skill"]).rstrip() + "\n"
+        if result and str(result.get("new_prompt", "")).strip():
+            result["new_prompt"] = str(result["new_prompt"]).rstrip() + "\n"
             if "change_summary" not in result or not isinstance(result["change_summary"], list):
                 result["change_summary"] = []
             return result

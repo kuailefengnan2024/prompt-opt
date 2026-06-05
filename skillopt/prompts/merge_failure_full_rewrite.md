@@ -14,15 +14,15 @@ If the current skill contains a protected block between <!-- SLOW_UPDATE_START -
 Respond ONLY with a valid JSON object:
 {
   "reasoning": "<brief summary of how the candidates were combined>",
-  "skill_candidates": [
+  "prompt_candidates": [
     {
       "title": "<short title>",
       "change_summary": ["<short change 1>", "<short change 2>"],
-      "new_skill": "<complete merged skill document>",
+      "new_prompt": "<complete merged skill document>",
       "support_count": <integer>,
       "source_type": "failure"
     }
   ]
 }
 
-Return exactly one item in "skill_candidates".
+Return exactly one item in "prompt_candidates".

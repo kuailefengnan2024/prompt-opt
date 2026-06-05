@@ -19,14 +19,14 @@ Respond ONLY with a valid JSON object:
   ],
   "patch": {
     "reasoning": "<brief summary of the rewrite>",
-    "skill_candidates": [
+    "prompt_candidates": [
       {
         "title": "<short title>",
         "change_summary": ["<short change 1>", "<short change 2>"],
-        "new_skill": "<complete rewritten skill document>"
+        "new_prompt": "<complete rewritten skill document>"
       }
     ]
   }
 }
 
-Return exactly one item in "skill_candidates".
+Return exactly one item in "prompt_candidates".

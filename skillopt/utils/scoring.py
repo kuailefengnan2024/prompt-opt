@@ -1,6 +1,6 @@
-"""【功能描述】打分与哈希工具：从 episode 结果计算 hard/soft 准确率，并对 skill 内容生成短哈希。
-【输入】episode 结果列表（dict 或 `RolloutResult`）；skill 文档字符串。
-【输出】`(hard, soft)` 元组；用于缓存的 16 位 `skill_hash` 十六进制串。
+"""【功能描述】打分与哈希工具：从 episode 结果计算 hard/soft 准确率，并对 prompt 内容生成短哈希。
+【输入】episode 结果列表（dict 或 `RolloutResult`）；prompt 文档字符串。
+【输出】`(hard, soft)` 元组；用于缓存的 16 位 `prompt_hash` 十六进制串。
 """
 from __future__ import annotations
 
@@ -26,6 +26,6 @@ def compute_score(results: list) -> tuple[float, float]:
     return hard, soft
 
 
-def skill_hash(content: str) -> str:
-    """返回 skill 内容的短确定性哈希（用于缓存）。"""
+def prompt_hash(content: str) -> str:
+    """返回 prompt 内容的短确定性哈希（用于缓存）。"""
     return hashlib.sha256(content.encode()).hexdigest()[:16]

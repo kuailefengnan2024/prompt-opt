@@ -40,13 +40,13 @@ ANSWER_SCHEMA: dict[str, Any] = {
 
 
 def render_skill_md(
-    skill_content: str,
+    prompt_content: str,
     *,
     name: str = "skillopt-target",
     description: str = "Dynamic ReflACT skill for the current benchmark task.",
     preamble: str = "",
 ) -> str:
-    body = skill_content.strip() or "No additional dynamic guidance was provided for this task."
+    body = prompt_content.strip() or "No additional dynamic guidance was provided for this task."
     chunks = [
         "---",
         f'name: "{name}"',
@@ -81,9 +81,9 @@ def prepare_workspace(
 ) -> tuple[str, str]:
     if os.path.exists(work_dir):
         shutil.rmtree(work_dir)
-    os.makedirs(os.path.join(work_dir, ".agents", "skills", "skillopt-target"), exist_ok=True)
+    os.makedirs(os.path.join(work_dir, ".agents", "prompts", "skillopt-target"), exist_ok=True)
 
-    skill_path = os.path.join(work_dir, ".agents", "skills", "skillopt-target", "SKILL.md")
+    skill_path = os.path.join(work_dir, ".agents", "prompts", "skillopt-target", "SKILL.md")
     with open(skill_path, "w", encoding="utf-8") as f:
         f.write(skill_md)
 

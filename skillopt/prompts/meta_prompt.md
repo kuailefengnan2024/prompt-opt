@@ -36,5 +36,5 @@ This meta skill should capture things like:
 Respond ONLY with a valid JSON object:
 {
   "reasoning": "<brief reflection on what editing directions helped or hurt>",
-  "meta_skill_content": "<compact optimizer-side guidance for future edit generation and selection>"
+  "meta_prompt_content": "<compact optimizer-side guidance for future edit generation and selection>"
 }

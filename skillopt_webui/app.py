@@ -398,8 +398,8 @@ def build_ui():
                                                     label="Analyst Workers (parallel reflection)")
                         use_slow_update = gr.Checkbox(value=True,
                                                        label="Slow Update (epoch-boundary momentum)")
-                        use_meta_skill = gr.Checkbox(value=True,
-                                                      label="Meta Skill (cross-epoch optimizer memory)")
+                        use_meta_prompt = gr.Checkbox(value=True,
+                                                      label="Meta Prompt (cross-epoch optimizer memory)")
                         use_gate = gr.Checkbox(value=True,
                                                 label="Gate (validation-based accept/reject)")
 
@@ -421,7 +421,7 @@ def build_ui():
                 config_dropdown.change(on_config_change, config_dropdown, config_preview)
 
                 def on_launch(cfg_path, lr_val, sched, epochs, batch, workers,
-                              slow_update, meta_skill, gate):
+                              slow_update, meta_prompt, gate):
                     overrides = {
                         "optimizer.learning_rate": lr_val,
                         "optimizer.lr_scheduler": sched,
@@ -429,7 +429,7 @@ def build_ui():
                         "train.batch_size": batch,
                         "gradient.analyst_workers": workers,
                         "optimizer.use_slow_update": slow_update,
-                        "optimizer.use_meta_skill": meta_skill,
+                        "optimizer.use_meta_prompt": meta_prompt,
                         "evaluation.use_gate": gate,
                     }
                     return manager.start(cfg_path, overrides)
@@ -437,7 +437,7 @@ def build_ui():
                 launch_btn.click(
                     on_launch,
                     [config_dropdown, lr, scheduler, num_epochs, batch_size,
-                     analyst_workers, use_slow_update, use_meta_skill, use_gate],
+                     analyst_workers, use_slow_update, use_meta_prompt, use_gate],
                     status_text,
                 )
                 stop_btn.click(lambda: manager.stop(), outputs=status_text)

@@ -1,6 +1,6 @@
 """【功能描述】ReflACT Aggregate 阶段 — 层次化 patch 合并；将 Reflect 阶段独立生成的 patch 通过层次化 LLM 调用合并为单一连贯 patch，失败驱动 patch 优先于成功驱动 patch。
 
-【输入】skill_content、failure_patches、success_patches、batch_size、update_mode 等。
+【输入】prompt_content、failure_patches、success_patches、batch_size、update_mode 等。
 
 【输出】合并后的 Patch dict（含 edits/reasoning 或对应 payload 键）。
 """
@@ -10,7 +10,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from skillopt.model import chat_optimizer
-from skillopt.optimizer.meta_skill import format_meta_skill_context
+from skillopt.optimizer.meta_prompt import format_meta_prompt_context
 from skillopt.optimizer.update_modes import (
     get_payload_items,
     is_full_rewrite_minibatch_mode,
@@ -26,20 +26,20 @@ from skillopt.utils import extract_json
 # ── 内部辅助函数 ──────────────────────────────────────────────────────────
 
 def _merge_batch(
-    skill_content: str,
+    prompt_content: str,
     patches: list[dict],
     system_prompt: str,
     update_mode: str,
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
     level: int = 1,
 ) -> dict:
     """调用 optimizer LLM 将一批 patch 合并为一个。"""
     patches_text = json.dumps(patches, ensure_ascii=False, indent=2)
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Skill\n{prompt_content}\n\n"
         f"## Patches to merge ({len(patches)} total, merge level {level})\n{patches_text}"
     )
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user = f"{optimizer_ctx}\n\n{user}"
     try:
@@ -68,7 +68,7 @@ def _merge_batch(
 
 
 def _hierarchical_merge(
-    skill_content: str,
+    prompt_content: str,
     patches: list[dict],
     system_prompt: str,
     update_mode: str,
@@ -76,7 +76,7 @@ def _hierarchical_merge(
     verbose: bool,
     label: str = "",
     workers: int = 16,
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
 ) -> dict:
     """使用给定 system prompt 层次化合并 N 个 patch。
 
@@ -116,8 +116,8 @@ def _hierarchical_merge(
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futs = {
                     ex.submit(
-                        _merge_batch, skill_content, batch, system_prompt, update_mode,
-                        meta_skill_context, level,
+                        _merge_batch, prompt_content, batch, system_prompt, update_mode,
+                        meta_prompt_context, level,
                     ): idx
                     for idx, batch in to_merge
                 }
@@ -141,14 +141,14 @@ def _hierarchical_merge(
 # ── 公共 API ────────────────────────────────────────────────────────────────
 
 def merge_patches(
-    skill_content: str,
+    prompt_content: str,
     failure_patches: list[dict],
     success_patches: list[dict],
     batch_size: int = 8,
     verbose: bool = True,
     workers: int = 16,
     update_mode: str = "patch",
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
 ) -> dict:
     """失败优先的层次化合并，并跟踪 support count。
 
@@ -180,15 +180,15 @@ def merge_patches(
         merge_final_prompt = load_prompt("merge_final")
 
     failure_merged = _hierarchical_merge(
-        skill_content, failure_patches, merge_failure_prompt, update_mode,
+        prompt_content, failure_patches, merge_failure_prompt, update_mode,
         batch_size, verbose, label="failure", workers=workers,
-        meta_skill_context=meta_skill_context,
+        meta_prompt_context=meta_prompt_context,
     )
 
     success_merged = _hierarchical_merge(
-        skill_content, success_patches, merge_success_prompt, update_mode,
+        prompt_content, success_patches, merge_success_prompt, update_mode,
         batch_size, verbose, label="success", workers=workers,
-        meta_skill_context=meta_skill_context,
+        meta_prompt_context=meta_prompt_context,
     )
 
     f_edits = get_payload_items(failure_merged, update_mode)
@@ -206,7 +206,7 @@ def merge_patches(
     if is_full_rewrite_minibatch_mode(update_mode):
         item_label = payload_label(update_mode)
         user = (
-            f"## Current Skill\n{skill_content}\n\n"
+            f"## Current Skill\n{prompt_content}\n\n"
             f"## Two pre-merged candidate groups to combine\n"
             f"Group 1 (from failed trajectories): "
             f"{len(f_edits)} {item_label}\n"
@@ -216,7 +216,7 @@ def merge_patches(
         )
     else:
         user = (
-            f"## Current Skill\n{skill_content}\n\n"
+            f"## Current Skill\n{prompt_content}\n\n"
             f"## Two pre-merged patch groups to combine\n"
             f"Group 1 (failure-driven, HIGH priority): "
             f"{len(f_edits)} edits\n"
@@ -224,7 +224,7 @@ def merge_patches(
             f"{len(s_edits)} edits\n\n"
             f"{combined_text}"
         )
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user = f"{optimizer_ctx}\n\n{user}"
     try:

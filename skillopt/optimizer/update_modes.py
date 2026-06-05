@@ -1,6 +1,6 @@
 """【功能描述】在 patch 编辑与基于 suggestions 的重写之间切换的辅助函数，统一 update_mode 归一化、payload 键/标签及项描述。
 
-【输入】update_mode 字符串、含 edits/revise_suggestions/skill_candidates 的 container dict。
+【输入】update_mode 字符串、含 edits/revise_suggestions/prompt_candidates 的 container dict。
 
 【输出】normalize_update_mode、get_payload_items、describe_item 等工具函数返回值。
 """
@@ -40,13 +40,13 @@ def is_full_rewrite_minibatch_mode(mode: str | None) -> bool:
 
 def payload_key(mode: str | None) -> str:
     if is_full_rewrite_minibatch_mode(mode):
-        return "skill_candidates"
+        return "prompt_candidates"
     return "revise_suggestions" if is_rewrite_mode(mode) else "edits"
 
 
 def payload_label(mode: str | None, *, singular: bool = False, title: bool = False) -> str:
     if is_full_rewrite_minibatch_mode(mode):
-        word = "skill candidate" if singular else "skill candidates"
+        word = "prompt candidate" if singular else "prompt candidates"
     elif is_rewrite_mode(mode):
         word = "suggestion" if singular else "suggestions"
     else:
@@ -87,9 +87,9 @@ def describe_item(item: dict, mode: str | None, *, max_chars: int = 240) -> str:
             parts.append(f"source={item.get('source_type')}")
         if item.get("support_count") is not None:
             parts.append(f"support={item.get('support_count')}")
-        new_skill = str(item.get("new_skill", "")).strip()
-        if new_skill:
-            parts.append(f"new_skill_preview={new_skill[:120]!r}")
+        new_prompt = str(item.get("new_prompt", "")).strip()
+        if new_prompt:
+            parts.append(f"new_prompt_preview={new_prompt[:120]!r}")
         text = "  ".join(parts)
     elif is_rewrite_mode(mode):
         parts = [

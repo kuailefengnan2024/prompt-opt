@@ -21,5 +21,5 @@ Respond ONLY with a valid JSON object:
 {
   "reasoning": "<why this rewrite implements the selected suggestions well>",
   "change_summary": ["<short change 1>", "<short change 2>"],
-  "new_skill": "<the full rewritten skill document>"
+  "new_prompt": "<the full rewritten skill document>"
 }

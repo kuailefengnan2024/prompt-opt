@@ -1,6 +1,6 @@
 """【功能描述】由优化器驱动的自主更新规模决策，调用 optimizer LLM 决定本步应应用多少条更新项。
 
-【输入】skill_content、merged_patch、update_mode、rollout 指标及 step_buffer_context、meta_skill_context 等上下文。
+【输入】prompt_content、merged_patch、update_mode、rollout 指标及 step_buffer_context、meta_prompt_context 等上下文。
 
 【输出】包含 learning_rate、reasoning、confidence 等字段的决策记录 dict。
 """
@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from skillopt.model import chat_optimizer
-from skillopt.optimizer.meta_skill import format_meta_skill_context
+from skillopt.optimizer.meta_prompt import format_meta_prompt_context
 from skillopt.optimizer.update_modes import describe_item, get_payload_items, payload_label
 from skillopt.prompts import load_prompt
 from skillopt.utils import extract_json
@@ -35,14 +35,14 @@ def _coerce_nonnegative_int(value: Any) -> int | None:
 
 def decide_autonomous_learning_rate(
     *,
-    skill_content: str,
+    prompt_content: str,
     merged_patch: dict,
     update_mode: str,
     rollout_hard: float,
     rollout_soft: float,
     rollout_n: int,
     step_buffer_context: str = "",
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
 ) -> dict:
     """请求 optimizer 为本步选择更新项数量。
 
@@ -56,7 +56,7 @@ def decide_autonomous_learning_rate(
         for idx, item in enumerate(items)
     ]
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Skill\n{prompt_content}\n\n"
         f"## Current Step Evidence\n"
         f"rollout_n={rollout_n}\n"
         f"rollout_hard={rollout_hard:.6f}\n"
@@ -69,7 +69,7 @@ def decide_autonomous_learning_rate(
     )
     if step_buffer_context.strip():
         user += f"\n\n## Previous Steps in This Epoch\n{step_buffer_context}"
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user = f"{optimizer_ctx}\n\n{user}"
 

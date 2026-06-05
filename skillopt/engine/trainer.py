@@ -1,14 +1,14 @@
 """【功能描述】ReflACT 训练器，主编排 6 阶段 ReflACT 流水线。
 【输入】cfg 配置字典、adapter 环境适配器实例。
-【输出】训练产物（skills、history、summary 等）及 summary 字典。
+【输出】训练产物（prompts、history、summary 等）及 summary 字典。
 
 流水线阶段：
-  1. 推演（Rollout）— 用当前 skill 执行 episode
+  1. 推演（Rollout）— 用当前 prompt 执行 episode
   2. 反思（Reflect）— 分析轨迹并生成 patch
   3. 聚合（Aggregate）— 分层合并 patch
   4. 筛选（Select）— 排序并选取 top 编辑
-  5. 更新（Update）— 将编辑应用到 skill 文档
-  6. 评估（Evaluate）— 验证候选 skill，接受/拒绝
+  5. 更新（Update）— 将编辑应用到 prompt 文档
+  6. 评估（Evaluate）— 验证候选 prompt，接受/拒绝
 
 训练器与环境无关；环境相关逻辑均委托给
 :class:`~skillopt.envs.base.EnvAdapter`。
@@ -23,17 +23,18 @@ import random
 import re
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 
 from skillopt.datasets.base import BatchSpec
 from skillopt.envs.base import EnvAdapter
 from skillopt.evaluation.gate import evaluate_gate
 from skillopt.gradient.aggregate import merge_patches
-from skillopt.optimizer.meta_skill import run_meta_skill
+from skillopt.optimizer.meta_prompt import run_meta_prompt
 from skillopt.optimizer.clip import rank_and_select
 from skillopt.optimizer.lr_autonomous import decide_autonomous_learning_rate
-from skillopt.optimizer.rewrite import rewrite_skill_from_suggestions
+from skillopt.optimizer.rewrite import rewrite_prompt_from_suggestions
 from skillopt.optimizer.scheduler import build_scheduler
-from skillopt.optimizer.skill import apply_patch_with_report
+from skillopt.optimizer.prompt_editor import apply_patch_with_report
 from skillopt.optimizer.slow_update import (
     build_comparison_pairs,
     extract_slow_update_field,
@@ -62,7 +63,45 @@ from skillopt.model import (
     set_optimizer_backend,
     set_optimizer_deployment,
 )
-from skillopt.utils import compute_score, skill_hash
+from skillopt.utils import compute_score, prompt_hash
+
+
+# ── Prompt 产物路径（T2I 用 best_prompt.md；上游默认仍为 best_prompt.md）────────
+
+@dataclass(frozen=True)
+class PromptArtifacts:
+    """训练产物文件名约定；由 env 配置覆盖。"""
+
+    best_file: str = "best_prompt.md"
+    version_dir: str = "prompts"
+    version_prefix: str = "prompt_v"
+
+
+def _artifact_layout(cfg: dict) -> PromptArtifacts:
+    return PromptArtifacts(
+        best_file=str(cfg.get("best_prompt_file") or "best_prompt.md"),
+        version_dir=str(cfg.get("prompt_version_dir") or "prompts"),
+        version_prefix=str(cfg.get("prompt_version_prefix") or "prompt_v"),
+    )
+
+
+def _checkpoint_path(out_root: str, step: int, art: PromptArtifacts) -> str:
+    return os.path.join(
+        out_root, art.version_dir, f"{art.version_prefix}{step:04d}.md",
+    )
+
+
+def _best_prompt_path(out_root: str, art: PromptArtifacts) -> str:
+    primary = os.path.join(out_root, art.best_file)
+    if os.path.exists(primary):
+        return primary
+    legacy = os.path.join(out_root, "best_skill.md")
+    return legacy if os.path.exists(legacy) else primary
+
+
+def _resolve_prompt_init_path(cfg: dict) -> str:
+    path = cfg.get("prompt_init") or ""
+    return os.path.abspath(path) if path else ""
 
 
 # ── Patch 规范化 ─────────────────────────────────────────────────────────────
@@ -177,8 +216,8 @@ def _build_longitudinal_pairs(
     *,
     adapter: EnvAdapter,
     dataloader,
-    prev_skill: str,
-    curr_skill: str,
+    prev_prompt: str,
+    curr_prompt: str,
     initial_items: list[dict],
     initial_prev_results: list[dict],
     initial_curr_results: list[dict],
@@ -229,8 +268,8 @@ def _build_longitudinal_pairs(
         env = adapter.build_env_from_batch(batch, out_root=out_root)
         prev_dir = os.path.join(prev_rollout_dir, "topup", item_id)
         curr_dir = os.path.join(curr_rollout_dir, "topup", item_id)
-        prev_results = adapter.rollout(env, prev_skill, prev_dir)
-        curr_results = adapter.rollout(env, curr_skill, curr_dir)
+        prev_results = adapter.rollout(env, prev_prompt, prev_dir)
+        curr_results = adapter.rollout(env, curr_prompt, curr_dir)
         pair = build_comparison_pairs(
             prev_results,
             curr_results,
@@ -280,33 +319,39 @@ def _save_history(out_root: str, history: list[dict]) -> None:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
-def _save_skill(out_root: str, step: int, content: str) -> None:
-    skills_dir = os.path.join(out_root, "skills")
-    os.makedirs(skills_dir, exist_ok=True)
-    with open(os.path.join(skills_dir, f"skill_v{step:04d}.md"), "w") as f:
+def _save_prompt(
+    out_root: str, step: int, content: str, art: PromptArtifacts | None = None,
+) -> None:
+    layout = art or PromptArtifacts()
+    version_dir = os.path.join(out_root, layout.version_dir)
+    os.makedirs(version_dir, exist_ok=True)
+    with open(_checkpoint_path(out_root, step, layout), "w") as f:
         f.write(content)
 
 
-def _load_skill(out_root: str, step: int) -> str:
-    path = os.path.join(out_root, "skills", f"skill_v{step:04d}.md")
-    with open(path) as f:
+def _load_prompt(out_root: str, step: int, art: PromptArtifacts | None = None) -> str:
+    layout = art or PromptArtifacts()
+    with open(_checkpoint_path(out_root, step, layout)) as f:
         return f.read()
 
 
-def _load_meta_skill_content(out_root: str, epoch: int) -> str:
+def _load_meta_prompt_content(out_root: str, epoch: int) -> str:
     if epoch <= 0:
         return ""
-    path = os.path.join(
-        out_root, "meta_skill", f"epoch_{epoch:02d}", "meta_skill_result.json",
-    )
-    if not os.path.exists(path):
-        return ""
-    try:
-        with open(path) as f:
-            result = json.load(f)
-        return str(result.get("meta_skill_content", "")).strip()
-    except Exception:
-        return ""
+    for dirname, fname, key in (
+        ("meta_prompt", "meta_prompt_result.json", "meta_prompt_content"),
+        ("meta_skill", "meta_skill_result.json", "meta_skill_content"),
+    ):
+        path = os.path.join(out_root, dirname, f"epoch_{epoch:02d}", fname)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path) as f:
+                result = json.load(f)
+            return str(result.get(key, "")).strip()
+        except Exception:
+            return ""
+    return ""
 
 
 def _load_runtime_state(out_root: str) -> dict | None:
@@ -518,6 +563,7 @@ class ReflACTTrainer:
         adapter = self.adapter
         out_root = cfg["out_root"]
         os.makedirs(out_root, exist_ok=True)
+        art = _artifact_layout(cfg)
 
         # ── 适配器初始化（一次性）────────────────────────────────────
         adapter.setup(cfg)
@@ -661,15 +707,15 @@ class ReflACTTrainer:
             if not ray.is_initialized():
                 ray.init(num_gpus=0)
 
-        # ── 加载初始 skill ───────────────────────────────────────────────
-        skill_init_path = os.path.abspath(cfg["skill_init"])
-        if os.path.exists(skill_init_path):
-            with open(skill_init_path) as f:
-                skill_init = f.read()
-            print(f"  [initial skill] {skill_init_path} ({len(skill_init)} chars)")
+        # ── 加载初始 prompt ──────────────────────────────────────────────
+        prompt_init_path = _resolve_prompt_init_path(cfg)
+        if prompt_init_path and os.path.exists(prompt_init_path):
+            with open(prompt_init_path) as f:
+                prompt_init = f.read()
+            print(f"  [initial prompt] {prompt_init_path} ({len(prompt_init)} chars)")
         else:
-            skill_init = ""
-            print("  [initial skill] no initial skill file — starting from blank")
+            prompt_init = ""
+            print("  [initial prompt] no prompt_init file — starting from blank")
 
         # ── 训练参数 ─────────────────────────────────────────────────────
         batch_size = cfg["batch_size"]
@@ -678,7 +724,7 @@ class ReflACTTrainer:
         seed = cfg["seed"]
         merge_bs = cfg["merge_batch_size"]
         max_analyst_rounds = int(cfg.get("max_analyst_rounds", 3) or 3)
-        update_mode = normalize_update_mode(cfg.get("skill_update_mode", "patch"))
+        update_mode = normalize_update_mode(cfg.get("prompt_update_mode", "patch"))
         lr_control_mode = _normalise_lr_control_mode(cfg.get("lr_control_mode", "fixed"))
         if is_full_rewrite_minibatch_mode(update_mode):
             lr_control_mode = "none"
@@ -705,7 +751,7 @@ class ReflACTTrainer:
         cfg["steps_per_epoch"] = steps_per_epoch
         cfg["batches_per_epoch"] = batches_per_epoch
         cfg["samples_per_epoch"] = train_size
-        cfg["skill_update_mode"] = update_mode
+        cfg["prompt_update_mode"] = update_mode
         cfg["lr_control_mode"] = lr_control_mode
 
         # 派生运行时值后保存配置。
@@ -740,7 +786,7 @@ class ReflACTTrainer:
         print(f"  [config] lr_scheduler={cfg.get('lr_scheduler', 'constant')} "
               f"edit_budget={cfg['edit_budget']} "
               f"min_edit_budget={cfg.get('min_edit_budget', 2)}")
-        print(f"  [config] skill_update_mode={update_mode} "
+        print(f"  [config] prompt_update_mode={update_mode} "
               f"lr_control_mode={lr_control_mode} "
               f"rewrite_reasoning_effort={rewrite_reasoning_effort or 'off'} "
               f"rewrite_max_completion_tokens={rewrite_max_completion_tokens} "
@@ -753,25 +799,29 @@ class ReflACTTrainer:
         runtime_state = _load_runtime_state(out_root)
         if runtime_state:
             last_step = int(runtime_state.get("last_completed_step", 0) or 0)
-            current_skill_path = runtime_state.get("current_skill_path") or os.path.join(
-                out_root, "skills", f"skill_v{last_step:04d}.md",
+            current_prompt_path = (
+                runtime_state.get("current_prompt_path")
+                or runtime_state.get("current_skill_path")
+                or _checkpoint_path(out_root, last_step, art)
             )
-            with open(current_skill_path) as f:
-                current_skill = f.read()
-            best_skill_path = runtime_state.get("best_skill_path") or os.path.join(
-                out_root, "best_skill.md",
+            with open(current_prompt_path) as f:
+                current_prompt = f.read()
+            best_prompt_path = (
+                runtime_state.get("best_prompt_path")
+                or runtime_state.get("best_skill_path")
+                or _best_prompt_path(out_root, art)
             )
-            if os.path.exists(best_skill_path):
-                with open(best_skill_path) as f:
-                    best_skill = f.read()
+            if os.path.exists(best_prompt_path):
+                with open(best_prompt_path) as f:
+                    best_prompt = f.read()
             else:
-                best_skill = current_skill
+                best_prompt = current_prompt
             current_score = float(runtime_state.get("current_score", -1.0) or -1.0)
             best_score = float(runtime_state.get("best_score", current_score) or current_score)
             best_step = runtime_state.get("best_step", last_step)
             current_origin = str(
                 runtime_state.get("current_origin")
-                or (f"step_{last_step:04d}" if last_step > 0 else "initial_skill")
+                or (f"step_{last_step:04d}" if last_step > 0 else "initial_prompt")
             )
             best_origin = str(runtime_state.get("best_origin") or current_origin)
             resume_from = last_step + 1
@@ -783,16 +833,16 @@ class ReflACTTrainer:
             )
         elif history:
             last_step = history[-1]["step"]
-            current_skill = _load_skill(out_root, last_step)
+            current_prompt = _load_prompt(out_root, last_step, art)
             best_rec = max(history, key=lambda h: h.get("best_score", 0.0))
             best_score = best_rec["best_score"]
             best_step = best_rec["best_step"]
-            best_skill_path = os.path.join(out_root, "best_skill.md")
-            if os.path.exists(best_skill_path):
-                with open(best_skill_path) as f:
-                    best_skill = f.read()
+            best_prompt_path = _best_prompt_path(out_root, art)
+            if os.path.exists(best_prompt_path):
+                with open(best_prompt_path) as f:
+                    best_prompt = f.read()
             else:
-                best_skill = _load_skill(out_root, best_step)
+                best_prompt = _load_prompt(out_root, best_step, art)
             current_score = history[-1].get("current_score", best_score)
             current_origin = f"step_{last_step:04d}"
             best_origin = f"step_{int(best_step):04d}" if isinstance(best_step, int) else str(best_step)
@@ -803,28 +853,27 @@ class ReflACTTrainer:
                 f"current={current_score:.4f} best={best_score:.4f}"
             )
         else:
-            current_skill = skill_init
-            best_skill = skill_init
+            current_prompt = prompt_init
+            best_prompt = prompt_init
             best_score = -1.0
             current_score = -1.0
             best_step = 0
-            current_origin = "initial_skill"
-            best_origin = "initial_skill"
+            current_origin = "initial_prompt"
+            best_origin = "initial_prompt"
             resume_from = 1
 
-        _save_skill(out_root, 0, skill_init)
+        _save_prompt(out_root, 0, prompt_init, art)
 
         def _persist_runtime_state(last_completed_step: int) -> None:
+            best_path = os.path.join(out_root, art.best_file)
             _save_runtime_state(
                 out_root,
                 {
                     "last_completed_step": last_completed_step,
-                    "current_skill_path": os.path.join(
-                        out_root, "skills", f"skill_v{last_completed_step:04d}.md",
-                    ),
+                    "current_prompt_path": _checkpoint_path(out_root, last_completed_step, art),
                     "current_score": current_score,
                     "current_origin": current_origin,
-                    "best_skill_path": os.path.join(out_root, "best_skill.md"),
+                    "best_prompt_path": best_path,
                     "best_score": best_score,
                     "best_step": best_step,
                     "best_origin": best_origin,
@@ -846,7 +895,7 @@ class ReflACTTrainer:
             )
         if current_score < 0:
             print(f"\n{'='*60}")
-            print("  BASELINE — evaluate initial skill on Selection set (valid_seen)")
+            print("  BASELINE — evaluate initial prompt on Selection set (valid_seen)")
             print(f"{'='*60}")
             sel_env, sel_n = _build_eval_env(
                 split="valid_seen",
@@ -855,13 +904,13 @@ class ReflACTTrainer:
             )
             print(f"  Selection items: {sel_n}")
             baseline_dir = os.path.join(out_root, "selection_eval_baseline")
-            baseline_results = adapter.rollout(sel_env, skill_init, baseline_dir)
+            baseline_results = adapter.rollout(sel_env, prompt_init, baseline_dir)
             current_score, baseline_soft = compute_score(baseline_results)
             best_score = current_score
-            sh = skill_hash(skill_init)
+            sh = prompt_hash(prompt_init)
             sel_cache[sh] = (current_score, baseline_soft)
-            current_origin = "initial_skill"
-            best_origin = "initial_skill"
+            current_origin = "initial_prompt"
+            best_origin = "initial_prompt"
             _persist_runtime_state(0)
             print(
                 f"  [baseline result] selection hard={current_score:.4f} "
@@ -895,9 +944,9 @@ class ReflACTTrainer:
             # 步骤缓冲区：在本 epoch 内累积逐步上下文（失败模式 +
             # 被拒绝的编辑），供优化器看到完整历史。
             step_buffer: list[dict] = []
-            active_meta_skill = (
-                _load_meta_skill_content(out_root, epoch - 1)
-                if cfg.get("use_meta_skill", False)
+            active_meta_prompt = (
+                _load_meta_prompt_content(out_root, epoch - 1)
+                if cfg.get("use_meta_prompt", False)
                 else ""
             )
 
@@ -905,10 +954,10 @@ class ReflACTTrainer:
                 f"\n  [EPOCH {epoch}/{num_epochs}] "
                 f"shuffled_seeds={shuffled_seeds}"
             )
-            if active_meta_skill:
+            if active_meta_prompt:
                 print(
-                    f"  [meta skill] loaded from epoch {epoch - 1} "
-                    f"({len(active_meta_skill)} chars)"
+                    f"  [meta prompt] loaded from epoch {epoch - 1} "
+                    f"({len(active_meta_prompt)} chars)"
                 )
 
             for step_in_epoch in range(steps_per_epoch):
@@ -972,7 +1021,7 @@ class ReflACTTrainer:
                     t_phase = time.time()
                     print(f"    [1/6 ROLLOUT] train items={train_n} (from pool, batch_seed={batch_seed})")
                     rollout_results = adapter.rollout(
-                        train_env, current_skill, rollout_dir,
+                        train_env, current_prompt, rollout_dir,
                         use_eval_feedback=True,
                     )
                     r_hard, r_soft = compute_score(rollout_results)
@@ -988,11 +1037,11 @@ class ReflACTTrainer:
                     step_buffer_context = _format_step_buffer(step_buffer)
 
                     raw_patches = adapter.reflect(
-                        rollout_results, current_skill, batch_dir,
+                        rollout_results, current_prompt, batch_dir,
                         prediction_dir=pred_dir, patches_dir=patches_dir,
                         random_seed=batch_seed,
                         step_buffer_context=step_buffer_context,
-                        meta_skill_context=active_meta_skill,
+                        meta_prompt_context=active_meta_prompt,
                     )
                     failure_patches, success_patches = _normalise_patches(
                         raw_patches,
@@ -1051,25 +1100,25 @@ class ReflACTTrainer:
                     step_rec["current_score"] = current_score
                     step_rec["best_score"] = best_score
                     step_rec["best_step"] = best_step
-                    step_rec["skill_len"] = len(current_skill)
+                    step_rec["prompt_len"] = len(current_prompt)
                     step_rec["wall_time_s"] = round(time.time() - step_t0, 1)
                     history.append(step_rec)
                     _save_history(out_root, history)
-                    _save_skill(out_root, global_step, current_skill)
+                    _save_prompt(out_root, global_step, current_prompt, art)
                     _persist_runtime_state(global_step)
                     with open(os.path.join(step_dir, "step_record.json"), "w") as f:
                         json.dump(step_rec, f, indent=2, ensure_ascii=False)
-                    print("    [skip] no usable patches — skill unchanged")
+                    print("    [skip] no usable patches — prompt unchanged")
                     continue
 
                 # ③ 聚合 ─────────────────────────────────────────────────
                 t_phase = time.time()
                 merged_patch = merge_patches(
-                    current_skill, all_failure_patches, all_success_patches,
+                    current_prompt, all_failure_patches, all_success_patches,
                     batch_size=merge_bs, verbose=True,
                     workers=cfg["analyst_workers"],
                     update_mode=update_mode,
-                    meta_skill_context=active_meta_skill,
+                    meta_prompt_context=active_meta_prompt,
                 )
                 with open(os.path.join(step_dir, "merged_patch.json"), "w") as f:
                     json.dump(merged_patch, f, ensure_ascii=False, indent=2)
@@ -1096,14 +1145,14 @@ class ReflACTTrainer:
                 else:
                     if lr_control_mode == "autonomous":
                         lr_decision = decide_autonomous_learning_rate(
-                            skill_content=current_skill,
+                            prompt_content=current_prompt,
                             merged_patch=merged_patch,
                             update_mode=update_mode,
                             rollout_hard=agg_hard,
                             rollout_soft=agg_soft,
                             rollout_n=total_n,
                             step_buffer_context=step_buffer_context,
-                            meta_skill_context=active_meta_skill,
+                            meta_prompt_context=active_meta_prompt,
                         )
                         edit_budget = int(lr_decision["learning_rate"])
                         with open(os.path.join(step_dir, "lr_decision.json"), "w") as f:
@@ -1117,10 +1166,10 @@ class ReflACTTrainer:
                     else:
                         edit_budget = scheduler.step()
                     ranked_patch = rank_and_select(
-                        current_skill, merged_patch,
+                        current_prompt, merged_patch,
                         max_edits=edit_budget,
                         update_mode=update_mode,
-                        meta_skill_context=active_meta_skill,
+                        meta_prompt_context=active_meta_prompt,
                     )
                     with open(os.path.join(step_dir, "ranked_edits.json"), "w") as f:
                         json.dump(ranked_patch, f, ensure_ascii=False, indent=2)
@@ -1154,33 +1203,33 @@ class ReflACTTrainer:
                 t_phase = time.time()
                 rewrite_result = None
                 if update_mode == "rewrite_from_suggestions":
-                    rewrite_result = rewrite_skill_from_suggestions(
-                        current_skill,
+                    rewrite_result = rewrite_prompt_from_suggestions(
+                        current_prompt,
                         ranked_patch,
                         step_buffer_context=step_buffer_context,
                         env=cfg.get("env"),
                         reasoning_effort=rewrite_reasoning_effort,
                         max_completion_tokens=rewrite_max_completion_tokens,
                     )
-                    if rewrite_result and rewrite_result.get("new_skill"):
-                        candidate_skill = rewrite_result["new_skill"]
+                    if rewrite_result and rewrite_result.get("new_prompt"):
+                        candidate_prompt = rewrite_result["new_prompt"]
                         apply_report = []
                         with open(os.path.join(step_dir, "rewrite_result.json"), "w") as f:
                             json.dump(rewrite_result, f, ensure_ascii=False, indent=2)
                     else:
-                        candidate_skill = current_skill
+                        candidate_prompt = current_prompt
                         apply_report = []
                 elif is_full_rewrite_minibatch_mode(update_mode):
-                    skill_candidates = get_payload_items(ranked_patch, update_mode)
+                    prompt_candidates = get_payload_items(ranked_patch, update_mode)
                     selected_candidate = next(
                         (
-                            item for item in skill_candidates
-                            if isinstance(item, dict) and str(item.get("new_skill", "")).strip()
+                            item for item in prompt_candidates
+                            if isinstance(item, dict) and str(item.get("new_prompt", "")).strip()
                         ),
                         None,
                     )
                     if selected_candidate:
-                        candidate_skill = str(selected_candidate["new_skill"]).rstrip() + "\n"
+                        candidate_prompt = str(selected_candidate["new_prompt"]).rstrip() + "\n"
                         apply_report = []
                         rewrite_result = {
                             "reasoning": ranked_patch.get("reasoning", ""),
@@ -1199,19 +1248,19 @@ class ReflACTTrainer:
                                 indent=2,
                             )
                     else:
-                        candidate_skill = current_skill
+                        candidate_prompt = current_prompt
                         apply_report = []
                 else:
-                    candidate_skill, apply_report = apply_patch_with_report(current_skill, ranked_patch)
-                with open(os.path.join(step_dir, "candidate_skill.md"), "w") as f:
-                    f.write(candidate_skill)
+                    candidate_prompt, apply_report = apply_patch_with_report(current_prompt, ranked_patch)
+                with open(os.path.join(step_dir, "candidate_prompt.md"), "w") as f:
+                    f.write(candidate_prompt)
                 if apply_report:
                     with open(os.path.join(step_dir, "edit_apply_report.json"), "w") as f:
                         json.dump(apply_report, f, indent=2, ensure_ascii=False)
 
-                cand_hash = skill_hash(candidate_skill)
+                cand_hash = prompt_hash(candidate_prompt)
                 step_rec["candidate_hash"] = cand_hash
-                step_rec["candidate_skill_len"] = len(candidate_skill)
+                step_rec["candidate_prompt_len"] = len(candidate_prompt)
                 if rewrite_result:
                     step_rec["rewrite_change_summary"] = rewrite_result.get("change_summary", [])
                 if apply_report:
@@ -1239,19 +1288,19 @@ class ReflACTTrainer:
                     step_rec["current_score"] = current_score
                     step_rec["best_score"] = best_score
                     step_rec["best_step"] = best_step
-                    step_rec["skill_len"] = len(current_skill)
+                    step_rec["prompt_len"] = len(current_prompt)
                     step_rec["wall_time_s"] = round(time.time() - step_t0, 1)
                     history.append(step_rec)
                     _save_history(out_root, history)
-                    _save_skill(out_root, global_step, current_skill)
+                    _save_prompt(out_root, global_step, current_prompt, art)
                     _persist_runtime_state(global_step)
                     with open(os.path.join(step_dir, "step_record.json"), "w") as f:
                         json.dump(step_rec, f, indent=2, ensure_ascii=False)
-                    print("    [skip] no usable rewrite generated — skill unchanged")
+                    print("    [skip] no usable rewrite generated — prompt unchanged")
                     continue
                 print(
                     f"    [5/6 UPDATE] "
-                    f"skill_len {len(current_skill)} -> {len(candidate_skill)}"
+                    f"prompt_len {len(current_prompt)} -> {len(candidate_prompt)}"
                 )
 
                 # ⑥ 评估 ─────────────────────────────────────────────────
@@ -1270,7 +1319,7 @@ class ReflACTTrainer:
                     )
                     print(f"    [6/6 EVALUATE] selection items={sel_n}")
                     sel_eval_dir = os.path.join(step_dir, "selection_eval")
-                    sel_results = adapter.rollout(sel_env, candidate_skill, sel_eval_dir)
+                    sel_results = adapter.rollout(sel_env, candidate_prompt, sel_eval_dir)
                     cand_hard, cand_soft = compute_score(sel_results)
                     sel_cache[cand_hash] = (cand_hard, cand_soft)
 
@@ -1278,11 +1327,11 @@ class ReflACTTrainer:
                 step_rec["selection_soft"] = cand_soft
 
                 gate = evaluate_gate(
-                    candidate_skill=candidate_skill,
+                    candidate_prompt=candidate_prompt,
                     cand_hard=cand_hard,
-                    current_skill=current_skill,
+                    current_prompt=current_prompt,
                     current_score=current_score,
-                    best_skill=best_skill,
+                    best_prompt=best_prompt,
                     best_score=best_score,
                     best_step=best_step,
                     global_step=global_step,
@@ -1290,9 +1339,9 @@ class ReflACTTrainer:
                 step_rec["action"] = gate.action
                 prev_current = current_score
                 prev_best = best_score
-                current_skill = gate.current_skill
+                current_prompt = gate.current_prompt
                 current_score = gate.current_score
-                best_skill = gate.best_skill
+                best_prompt = gate.best_prompt
                 best_score = gate.best_score
                 best_step = gate.best_step
                 if gate.action in {"accept", "accept_new_best"}:
@@ -1375,12 +1424,12 @@ class ReflACTTrainer:
                 step_rec["best_step"] = best_step
                 step_rec["current_origin"] = current_origin
                 step_rec["best_origin"] = best_origin
-                step_rec["skill_len"] = len(current_skill)
+                step_rec["prompt_len"] = len(current_prompt)
                 step_rec["wall_time_s"] = round(time.time() - step_t0, 1)
 
-                _save_skill(out_root, global_step, current_skill)
-                with open(os.path.join(out_root, "best_skill.md"), "w") as f:
-                    f.write(best_skill)
+                _save_prompt(out_root, global_step, current_prompt, art)
+                with open(os.path.join(out_root, art.best_file), "w") as f:
+                    f.write(best_prompt)
                 history.append(step_rec)
                 _save_history(out_root, history)
                 _persist_runtime_state(global_step)
@@ -1400,7 +1449,7 @@ class ReflACTTrainer:
                     f"evaluate={timing.get('evaluate_s',0)}s"
                 )
 
-            epoch_last_step_skill = current_skill
+            epoch_last_step_prompt = current_prompt
             epoch_comparison_pairs: list[dict] | None = None
 
             # ── 慢更新（epoch 末）────────────────────────────────────────
@@ -1431,20 +1480,20 @@ class ReflACTTrainer:
                         }
                         and epoch >= 2
                     ):
-                        current_skill = replace_slow_update_field(
-                            current_skill, slow_saved["slow_update_content"],
+                        current_prompt = replace_slow_update_field(
+                            current_prompt, slow_saved["slow_update_content"],
                         )
-                        best_skill = replace_slow_update_field(
-                            best_skill, slow_saved["slow_update_content"],
+                        best_prompt = replace_slow_update_field(
+                            best_prompt, slow_saved["slow_update_content"],
                         )
                 elif epoch == 1:
                     # Epoch 1：注入空占位符
                     os.makedirs(slow_dir, exist_ok=True)
-                    current_skill = inject_empty_slow_update_field(current_skill)
+                    current_prompt = inject_empty_slow_update_field(current_prompt)
                     current_origin = f"slow_update_placeholder_epoch_{epoch:02d}"
-                    _save_skill(out_root, global_step, current_skill)
-                    with open(os.path.join(out_root, "best_skill.md"), "w") as f:
-                        f.write(best_skill if best_score > current_score else current_skill)
+                    _save_prompt(out_root, global_step, current_prompt, art)
+                    with open(os.path.join(out_root, art.best_file), "w") as f:
+                        f.write(best_prompt if best_score > current_score else current_prompt)
                     with open(slow_done_path, "w") as f:
                         json.dump({"action": "inject_placeholder", "epoch": epoch}, f, indent=2)
                     _persist_runtime_state(global_step)
@@ -1462,12 +1511,12 @@ class ReflACTTrainer:
                         f"  {'='*60}"
                     )
 
-                    # 1. 取上一 epoch 最后一步的 skill
+                    # 1. 取上一 epoch 最后一步的 prompt
                     prev_epoch_records = [
                         h for h in history if h.get("epoch") == epoch - 1
                     ]
                     prev_epoch_last_step = prev_epoch_records[-1]["step"]
-                    prev_skill = _load_skill(out_root, prev_epoch_last_step)
+                    prev_prompt = _load_prompt(out_root, prev_epoch_last_step, art)
 
                     # 2. 从训练集采样条目
                     slow_n = cfg.get("slow_update_samples", 20)
@@ -1490,12 +1539,12 @@ class ReflACTTrainer:
                     slow_items = list(slow_env) if hasattr(slow_env, "__iter__") else slow_env
                     print(f"    [slow update] sampled {len(slow_items)} train items (seed={slow_seed})")
 
-                    # 3. 用两个 skill 做 rollout
+                    # 3. 用两个 prompt 做 rollout
                     t_slow = time.time()
                     prev_rollout_dir = os.path.join(slow_dir, "rollout_prev")
                     curr_rollout_dir = os.path.join(slow_dir, "rollout_curr")
-                    results_prev = adapter.rollout(slow_env, prev_skill, prev_rollout_dir)
-                    results_curr = adapter.rollout(slow_env, current_skill, curr_rollout_dir)
+                    results_prev = adapter.rollout(slow_env, prev_prompt, prev_rollout_dir)
+                    results_curr = adapter.rollout(slow_env, current_prompt, curr_rollout_dir)
 
                     prev_hard, _ = compute_score(results_prev)
                     curr_hard, _ = compute_score(results_curr)
@@ -1508,8 +1557,8 @@ class ReflACTTrainer:
                     comparison_pairs, all_comparison_pairs = _build_longitudinal_pairs(
                         adapter=adapter,
                         dataloader=dataloader,
-                        prev_skill=prev_skill,
-                        curr_skill=current_skill,
+                        prev_prompt=prev_prompt,
+                        curr_prompt=current_prompt,
                         initial_items=slow_items,
                         initial_prev_results=results_prev,
                         initial_curr_results=results_curr,
@@ -1543,15 +1592,15 @@ class ReflACTTrainer:
                     )
 
                     # 5. 提取上一轮 slow update 指导供反思
-                    existing_guidance = extract_slow_update_field(current_skill)
+                    existing_guidance = extract_slow_update_field(current_prompt)
 
                     # 6. 优化器分析（结合上一轮指导反思）
                     slow_result = run_slow_update(
-                        current_skill,
+                        current_prompt,
                         results_prev,
                         results_curr,
                         slow_items,
-                        prev_skill=prev_skill,
+                        prev_prompt=prev_prompt,
                         prev_slow_update_content=existing_guidance,
                         prev_rollout_dir=prev_rollout_dir,
                         curr_rollout_dir=curr_rollout_dir,
@@ -1561,10 +1610,10 @@ class ReflACTTrainer:
 
                     if slow_result and slow_result.get("slow_update_content"):
                         slow_candidate = replace_slow_update_field(
-                            current_skill, slow_result["slow_update_content"],
+                            current_prompt, slow_result["slow_update_content"],
                         )
-                        slow_candidate_hash = skill_hash(slow_candidate)
-                        with open(os.path.join(slow_dir, "candidate_skill.md"), "w") as f:
+                        slow_candidate_hash = prompt_hash(slow_candidate)
+                        with open(os.path.join(slow_dir, "candidate_prompt.md"), "w") as f:
                             f.write(slow_candidate)
                         slow_result["time_s"] = slow_time
                         slow_result["prev_hard"] = prev_hard
@@ -1576,18 +1625,18 @@ class ReflACTTrainer:
                             "observed across adjacent epochs."
                         )
 
-                        # slow update 字段无条件强制写入 current_skill 与 best_skill；
+                        # slow update 字段无条件强制写入 current_prompt 与 best_prompt；
                         # epoch 级纵向指导应始终保留，不得被步骤级筛选分数门控。
                         slow_content = slow_result["slow_update_content"]
-                        current_skill = replace_slow_update_field(
-                            current_skill, slow_content,
+                        current_prompt = replace_slow_update_field(
+                            current_prompt, slow_content,
                         )
-                        best_skill = replace_slow_update_field(
-                            best_skill, slow_content,
+                        best_prompt = replace_slow_update_field(
+                            best_prompt, slow_content,
                         )
                         # 更新缓存，使后续步骤使用
-                        # 已注入 slow update 的 skill 做哈希。
-                        slow_candidate_hash = skill_hash(current_skill)
+                        # 已注入 slow update 的 prompt 做哈希。
+                        slow_candidate_hash = prompt_hash(current_prompt)
                         sel_cache[slow_candidate_hash] = (current_score, 0.0)
 
                         slow_result["action"] = "force_accept"
@@ -1610,9 +1659,9 @@ class ReflACTTrainer:
                     # 5. 保存
                     with open(slow_done_path, "w") as f:
                         json.dump(slow_result, f, indent=2, ensure_ascii=False)
-                    _save_skill(out_root, global_step, current_skill)
-                    with open(os.path.join(out_root, "best_skill.md"), "w") as f:
-                        f.write(best_skill)
+                    _save_prompt(out_root, global_step, current_prompt, art)
+                    with open(os.path.join(out_root, art.best_file), "w") as f:
+                        f.write(best_prompt)
                     _persist_runtime_state(global_step)
 
                     print(
@@ -1621,16 +1670,16 @@ class ReflACTTrainer:
                     )
 
             # ── 元 Skill（epoch 末，优化器侧记忆）────────────────────────
-            use_meta_skill = cfg.get("use_meta_skill", False)
-            if use_meta_skill:
-                meta_skill_dir = os.path.join(out_root, "meta_skill", f"epoch_{epoch:02d}")
-                meta_skill_done_path = os.path.join(meta_skill_dir, "meta_skill_result.json")
-                os.makedirs(meta_skill_dir, exist_ok=True)
+            use_meta_prompt = cfg.get("use_meta_prompt", False)
+            if use_meta_prompt:
+                meta_prompt_dir = os.path.join(out_root, "meta_prompt", f"epoch_{epoch:02d}")
+                meta_prompt_done_path = os.path.join(meta_prompt_dir, "meta_prompt_result.json")
+                os.makedirs(meta_prompt_dir, exist_ok=True)
 
-                if os.path.exists(meta_skill_done_path):
+                if os.path.exists(meta_prompt_done_path):
                     print(f"\n  [META SKILL epoch {epoch}] resumed — already done")
                 elif epoch == 1:
-                    with open(meta_skill_done_path, "w") as f:
+                    with open(meta_prompt_done_path, "w") as f:
                         json.dump(
                             {"action": "skip_first_epoch", "epoch": epoch},
                             f, indent=2, ensure_ascii=False,
@@ -1646,8 +1695,8 @@ class ReflACTTrainer:
 
                     prev_epoch_records = [h for h in history if h.get("epoch") == epoch - 1]
                     prev_epoch_last_step = prev_epoch_records[-1]["step"]
-                    prev_skill = _load_skill(out_root, prev_epoch_last_step)
-                    prev_meta_skill = _load_meta_skill_content(out_root, epoch - 1)
+                    prev_prompt = _load_prompt(out_root, prev_epoch_last_step, art)
+                    prev_meta_prompt = _load_meta_prompt_content(out_root, epoch - 1)
 
                     if epoch_comparison_pairs is None:
                         meta_n = cfg.get("slow_update_samples", 20)
@@ -1668,15 +1717,15 @@ class ReflACTTrainer:
                                 out_root=out_root,
                             )
                         meta_items = list(meta_env) if hasattr(meta_env, "__iter__") else meta_env
-                        prev_rollout_dir = os.path.join(meta_skill_dir, "rollout_prev")
-                        curr_rollout_dir = os.path.join(meta_skill_dir, "rollout_curr")
-                        results_prev = adapter.rollout(meta_env, prev_skill, prev_rollout_dir)
-                        results_curr = adapter.rollout(meta_env, epoch_last_step_skill, curr_rollout_dir)
+                        prev_rollout_dir = os.path.join(meta_prompt_dir, "rollout_prev")
+                        curr_rollout_dir = os.path.join(meta_prompt_dir, "rollout_curr")
+                        results_prev = adapter.rollout(meta_env, prev_prompt, prev_rollout_dir)
+                        results_curr = adapter.rollout(meta_env, epoch_last_step_prompt, curr_rollout_dir)
                         epoch_comparison_pairs, all_meta_comparison_pairs = _build_longitudinal_pairs(
                             adapter=adapter,
                             dataloader=dataloader,
-                            prev_skill=prev_skill,
-                            curr_skill=epoch_last_step_skill,
+                            prev_prompt=prev_prompt,
+                            curr_prompt=epoch_last_step_prompt,
                             initial_items=meta_items,
                             initial_prev_results=results_prev,
                             initial_curr_results=results_curr,
@@ -1690,15 +1739,15 @@ class ReflACTTrainer:
                         if all_meta_comparison_pairs is not epoch_comparison_pairs:
                             save_comparison_pairs(
                                 all_meta_comparison_pairs,
-                                os.path.join(meta_skill_dir, "comparison_pairs_all.json"),
+                                os.path.join(meta_prompt_dir, "comparison_pairs_all.json"),
                             )
                         save_comparison_pairs(
                             epoch_comparison_pairs,
-                            os.path.join(meta_skill_dir, "comparison_pairs.json"),
+                            os.path.join(meta_prompt_dir, "comparison_pairs.json"),
                         )
                         meta_counts = _pair_category_counts(epoch_comparison_pairs)
                         print(
-                            f"    [meta skill] comparison: "
+                            f"    [meta prompt] comparison: "
                             f"regressed={meta_counts.get('regressed', 0)} "
                             f"improved={meta_counts.get('improved', 0)} "
                             f"persistent_fail={meta_counts.get('persistent_fail', 0)} "
@@ -1707,38 +1756,38 @@ class ReflACTTrainer:
                             f"kept={len(epoch_comparison_pairs)}/{len(all_meta_comparison_pairs)}"
                         )
 
-                    t_meta_skill = time.time()
-                    meta_skill_result = run_meta_skill(
-                        prev_skill=prev_skill,
-                        curr_skill=epoch_last_step_skill,
+                    t_meta_prompt = time.time()
+                    meta_prompt_result = run_meta_prompt(
+                        prev_prompt=prev_prompt,
+                        curr_prompt=epoch_last_step_prompt,
                         comparison_pairs=epoch_comparison_pairs or [],
-                        prev_meta_skill_content=prev_meta_skill,
+                        prev_meta_prompt_content=prev_meta_prompt,
                     )
-                    meta_skill_time = round(time.time() - t_meta_skill, 1)
+                    meta_prompt_time = round(time.time() - t_meta_prompt, 1)
 
-                    if meta_skill_result and meta_skill_result.get("meta_skill_content"):
-                        meta_skill_result["time_s"] = meta_skill_time
-                        meta_skill_result["action"] = "write_meta_skill"
+                    if meta_prompt_result and meta_prompt_result.get("meta_prompt_content"):
+                        meta_prompt_result["time_s"] = meta_prompt_time
+                        meta_prompt_result["action"] = "write_meta_prompt"
                         print(
-                            f"    [meta skill] memory written "
-                            f"({len(meta_skill_result['meta_skill_content'])} chars), "
-                            f"{meta_skill_time}s"
+                            f"    [meta prompt] memory written "
+                            f"({len(meta_prompt_result['meta_prompt_content'])} chars), "
+                            f"{meta_prompt_time}s"
                         )
                     else:
-                        meta_skill_result = meta_skill_result or {}
-                        meta_skill_result["time_s"] = meta_skill_time
-                        meta_skill_result["action"] = "no_content"
-                        print(f"    [meta skill] no memory produced, {meta_skill_time}s")
+                        meta_prompt_result = meta_prompt_result or {}
+                        meta_prompt_result["time_s"] = meta_prompt_time
+                        meta_prompt_result["action"] = "no_content"
+                        print(f"    [meta prompt] no memory produced, {meta_prompt_time}s")
 
-                    with open(meta_skill_done_path, "w") as f:
-                        json.dump(meta_skill_result, f, indent=2, ensure_ascii=False)
+                    with open(meta_prompt_done_path, "w") as f:
+                        json.dump(meta_prompt_result, f, indent=2, ensure_ascii=False)
 
-        # ── 保存最佳 skill ─────────────────────────────────────────────────
-        with open(os.path.join(out_root, "best_skill.md"), "w") as f:
-            f.write(best_skill)
+        # ── 保存最佳 prompt ───────────────────────────────────────────────
+        with open(os.path.join(out_root, art.best_file), "w") as f:
+            f.write(best_prompt)
         _persist_runtime_state(global_step)
         print(
-            f"\n  [done] best skill from step {best_step}, "
+            f"\n  [done] best prompt from step {best_step}, "
             f"score={best_score:.4f}"
         )
 
@@ -1753,7 +1802,7 @@ class ReflACTTrainer:
 
             # 基线：测试集上的 S_0（valid_unseen）
             print(f"\n{'='*60}")
-            print("  BASELINE TEST — evaluate initial skill on Test set (valid_unseen)")
+            print("  BASELINE TEST — evaluate initial prompt on Test set (valid_unseen)")
             print(f"{'='*60}")
             test_env, test_n = _build_eval_env(
                 split="valid_unseen",
@@ -1762,7 +1811,7 @@ class ReflACTTrainer:
             )
             print(f"  Test items: {test_n}")
             baseline_test_dir = os.path.join(out_root, "test_eval_baseline")
-            baseline_test_results = adapter.rollout(test_env, skill_init, baseline_test_dir)
+            baseline_test_results = adapter.rollout(test_env, prompt_init, baseline_test_dir)
             baseline_test_hard, baseline_test_soft = compute_score(baseline_test_results)
             baseline_buckets = _compute_task_type_buckets(baseline_test_results, task_types)
             print("\n  === Baseline Test Results (S_0) ===")
@@ -1785,9 +1834,9 @@ class ReflACTTrainer:
                     f, indent=2, ensure_ascii=False,
                 )
 
-            # 测试集上的最佳 skill
+            # 测试集上的最佳 prompt
             print(f"\n{'='*60}")
-            print("  BEST SKILL TEST — evaluate best skill on Test set (valid_unseen)")
+            print("  BEST PROMPT TEST — evaluate best prompt on Test set (valid_unseen)")
             print(f"{'='*60}")
             test_env2, test_n2 = _build_eval_env(
                 split="valid_unseen",
@@ -1796,7 +1845,7 @@ class ReflACTTrainer:
             )
             print(f"  Test items: {test_n2}")
             test_dir = os.path.join(out_root, "test_eval")
-            test_results = adapter.rollout(test_env2, best_skill, test_dir)
+            test_results = adapter.rollout(test_env2, best_prompt, test_dir)
             test_hard, test_soft = compute_score(test_results)
             best_buckets = _compute_task_type_buckets(test_results, task_types)
             print("\n  === Best Skill Test Results ===")
@@ -1854,7 +1903,7 @@ class ReflACTTrainer:
             "version": "skillopt-0.1.0",
             "config": _redact_cfg(cfg),
             "baseline_selection_hard": sel_cache.get(
-                skill_hash(skill_init), (None, None),
+                prompt_hash(prompt_init), (None, None),
             )[0],
             "best_selection_hard": best_score,
             "best_step": best_step,

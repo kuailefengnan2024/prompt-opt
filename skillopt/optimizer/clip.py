@@ -1,13 +1,13 @@
 """【功能描述】ReflACT 梯度裁剪 — 由 LLM 驱动的编辑排序与选择，类比神经网络训练中的梯度裁剪：按重要性排序候选编辑并选取 top-L 应用，控制有效步长。
 
-【输入】skill_content、patch、max_edits、meta_skill_context、update_mode。
+【输入】prompt_content、patch、max_edits、meta_prompt_context、update_mode。
 
 【输出】含选中编辑及可选 ranking_details 的 Patch dict；原 core/select.py。
 """
 from __future__ import annotations
 
 from skillopt.model import chat_optimizer
-from skillopt.optimizer.meta_skill import format_meta_skill_context
+from skillopt.optimizer.meta_prompt import format_meta_prompt_context
 from skillopt.optimizer.update_modes import (
     describe_item,
     get_payload_items,
@@ -23,10 +23,10 @@ from skillopt.utils import extract_json
 # ── 公共 API ────────────────────────────────────────────────────────────────
 
 def rank_and_select(
-    skill_content: str,
+    prompt_content: str,
     patch: dict,
     max_edits: int,
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
     update_mode: str = "patch",
 ) -> dict:
     """使用 optimizer LLM 按重要性排序编辑，保留 top-L。
@@ -35,7 +35,7 @@ def rank_and_select(
 
     Parameters
     ----------
-    skill_content : str
+    prompt_content : str
         当前 skill 文档。
     patch : dict
         含 ``edits`` 列表的合并 :class:`~skillopt.types.Patch` dict。
@@ -58,13 +58,13 @@ def rank_and_select(
         edits_desc.append(f"[{i}] {describe_item(edit, update_mode, max_chars=500)}")
 
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Skill\n{prompt_content}\n\n"
         f"## {payload_label(update_mode, title=True)} Pool ({len(edits)} {payload_label(update_mode)}, budget={max_edits})\n"
         + "\n".join(edits_desc)
         + f"\n\nSelect the {max_edits} most important {payload_label(update_mode)}. "
         f"Return their 0-based indices in priority order."
     )
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user = f"{optimizer_ctx}\n\n{user}"
     prompt_name = "ranking_rewrite" if is_rewrite_mode(update_mode) else "ranking"

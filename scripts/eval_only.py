@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""【功能描述】SkillOpt 仅评估模式：在数据集上运行指定 skill，不执行训练。
-【输入】命令行参数（--config、--skill、--split、--cfg-options 等）、YAML 配置与 skill .md 文件路径。
-【输出】rollout 结果与 eval_summary.json 写入 out_root；控制台打印 hard/soft 分数。
+"""【功能描述】仅评估：在数据集上对指定 prompt 做 rollout，不训练。
+【输入】`--config`、`--prompt`、split 目录等。
+【输出】`eval_summary.json` 与 rollout 产物。
 
 用法
 -----
     python scripts/eval_only.py \\
         --config configs/t2i/default.yaml \\
-        --skill skillopt/envs/t2i/skills/initial.md \\
-        --split_dir /path/to/split \\
-        --out_root outputs/eval_skill0
+        --prompt skillopt/envs/t2i/prompts/initial.md \\
+        --split_dir data/t2i_split \\
+        --out_root outputs/eval_run
 
 所有 YAML 键均可从 CLI 覆盖，与 train.py 相同。
 """
@@ -53,8 +53,8 @@ _BOOL = lambda x: str(x).lower() in ("true", "1", "yes")  # noqa: E731
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="SkillOpt eval-only")
     p.add_argument("--config", type=str, required=True)
-    p.add_argument("--skill", type=str, required=True,
-                   help="Path to skill .md file to evaluate")
+    p.add_argument("--prompt", type=str, required=True,
+                   help="Path to prompt .md file to evaluate")
     p.add_argument("--split", type=str, default="all",
                    help="Which split to eval: train/valid_seen/valid_unseen/all (default: all)")
     p.add_argument("--cfg-options", nargs="+", default=[],
@@ -133,7 +133,7 @@ def main() -> None:
 
     # 应用遗留 --key value 覆盖
     cli = {k: v for k, v in vars(args).items()
-           if v is not None and k not in ("config", "skill", "split", "cfg_options")}
+           if v is not None and k not in ("config", "prompt", "split", "cfg_options")}
     if cli:
         if structured:
             from skillopt.config import apply_overrides
@@ -273,11 +273,11 @@ def main() -> None:
     out_root = cfg["out_root"]
     os.makedirs(out_root, exist_ok=True)
 
-    # 加载 skill
-    skill_path = os.path.abspath(args.skill)
-    with open(skill_path) as f:
-        skill_content = f.read()
-    print(f"  [skill] {skill_path} ({len(skill_content)} chars)")
+    # 加载 prompt
+    prompt_path = os.path.abspath(args.prompt)
+    with open(prompt_path) as f:
+        prompt_content = f.read()
+    print(f"  [prompt] {prompt_path} ({len(prompt_content)} chars)")
 
     # 配置模型
     configure_azure_openai(
@@ -350,7 +350,7 @@ def main() -> None:
     print(f"{'='*60}")
 
     # 执行 rollout
-    results = adapter.rollout(items, skill_content, out_root)
+    results = adapter.rollout(items, prompt_content, out_root)
 
     # 计分
     hard, soft = compute_score(results)
@@ -360,7 +360,7 @@ def main() -> None:
 
     # 保存摘要
     summary = {
-        "skill": skill_path,
+        "prompt": prompt_path,
         "split": split,
         "n_items": len(results),
         "hard": hard,

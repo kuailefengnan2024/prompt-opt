@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--claude_code_exec_effort", type=str)
     p.add_argument("--claude_code_exec_max_thinking_tokens", type=int)
     p.add_argument("--codex_trace_to_optimizer", type=_BOOL)
-    p.add_argument("--skill_init", type=str)
+    p.add_argument("--prompt_init", type=str)
     p.add_argument("--num_epochs", type=int)
     p.add_argument("--train_size", type=int)
     p.add_argument("--steps_per_epoch", type=int)
@@ -129,7 +129,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--analyst_workers", type=int)
     p.add_argument("--failure_only", type=_BOOL)
     p.add_argument("--minibatch_size", type=int)
-    p.add_argument("--skill_update_mode", type=str,
+    p.add_argument("--prompt_update_mode", type=str,
                    choices=[
                        "patch",
                        "rewrite_from_suggestions",
@@ -143,7 +143,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--slow_update_samples", type=int)
     p.add_argument("--longitudinal_pair_policy", type=str,
                    choices=["mixed", "changed", "unchanged"])
-    p.add_argument("--use_meta_skill", type=_BOOL)
+    p.add_argument("--use_meta_prompt", type=_BOOL)
     p.add_argument("--data_path", type=str)
     p.add_argument("--split_mode", type=str,
                    choices=["ratio", "split_dir"])
@@ -236,17 +236,17 @@ _LEGACY_TO_STRUCTURED: dict[str, str] = {
     "min_edit_budget": "optimizer.min_learning_rate",
     "lr_scheduler": "optimizer.lr_scheduler",
     "lr_control_mode": "optimizer.lr_control_mode",
-    "skill_update_mode": "optimizer.skill_update_mode",
+    "prompt_update_mode": "optimizer.prompt_update_mode",
     "use_slow_update": "optimizer.use_slow_update",
     "slow_update_samples": "optimizer.slow_update_samples",
     "longitudinal_pair_policy": "optimizer.longitudinal_pair_policy",
-    "use_meta_skill": "optimizer.use_meta_skill",
+    "use_meta_prompt": "optimizer.use_meta_prompt",
     "use_gate": "evaluation.use_gate",
     "sel_env_num": "evaluation.sel_env_num",
     "test_env_num": "evaluation.test_env_num",
     "eval_test": "evaluation.eval_test",
     "env": "env.name",
-    "skill_init": "env.skill_init",
+    "prompt_init": "env.prompt_init",
     "out_root": "env.out_root",
 }
 
@@ -385,11 +385,11 @@ def main() -> None:
     print(f"  batch_size:     {cfg.get('batch_size')}")
     print(f"  edit_budget:    {cfg.get('edit_budget')}")
     print(f"  lr_scheduler:   {cfg.get('lr_scheduler', 'constant')}")
-    print(f"  update_mode:    {cfg.get('skill_update_mode', 'patch')}")
+    print(f"  update_mode:    {cfg.get('prompt_update_mode', 'patch')}")
     print(f"  min_edit_budget:{cfg.get('min_edit_budget', 2)}")
     print(f"  minibatch_size: {cfg.get('minibatch_size')}")
     print(f"  seed:           {cfg.get('seed')}")
-    print(f"  meta_skill:     {cfg.get('use_meta_skill', False)}")
+    print(f"  meta_prompt:    {cfg.get('use_meta_prompt', False)}")
     print(f"  slow_update:    {cfg.get('use_slow_update', False)}")
     print(f"  out_root:       {cfg.get('out_root')}")
     print(f"{'='*60}\n")

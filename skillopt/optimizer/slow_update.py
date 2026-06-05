@@ -1,6 +1,6 @@
 """【功能描述】ReflACT 慢更新 — epoch 级纵向 skill 精炼；每 epoch 结束时比较相同样本集在上一 epoch skill 与当前 epoch skill 下的 rollout 表现（马尔可夫：仅相邻 epoch），由 optimizer 分析回归、改进与持续失败，并将自由形式指导写入 skill 文档的受保护区域。
 
-【输入】skill_content、results_prev、results_curr、items、comparison_pairs 及 rollout 目录等。
+【输入】prompt_content、results_prev、results_curr、items、comparison_pairs 及 rollout 目录等。
 
 【输出】inject/replace/extract 等字段操作函数；run_slow_update 返回含 slow_update_content 的 dict 或 None。
 """
@@ -22,58 +22,54 @@ SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 # ── 字段操作辅助函数 ──────────────────────────────────────────────
 
 
-def has_slow_update_field(skill: str) -> bool:
-    return SLOW_UPDATE_START in skill and SLOW_UPDATE_END in skill
+def has_slow_update_field(prompt: str) -> bool:
+    return SLOW_UPDATE_START in prompt and SLOW_UPDATE_END in prompt
 
 
-def inject_empty_slow_update_field(skill: str) -> str:
-    if has_slow_update_field(skill):
-        return skill
+def inject_empty_slow_update_field(prompt: str) -> str:
+    if has_slow_update_field(prompt):
+        return prompt
     block = (
         f"\n\n{SLOW_UPDATE_START}\n"
         f"{SLOW_UPDATE_END}\n"
     )
-    return skill.rstrip() + block
+    return prompt.rstrip() + block
 
 
-def extract_slow_update_field(skill: str) -> str:
-    start = skill.find(SLOW_UPDATE_START)
-    end = skill.find(SLOW_UPDATE_END)
+def extract_slow_update_field(prompt: str) -> str:
+    start = prompt.find(SLOW_UPDATE_START)
+    end = prompt.find(SLOW_UPDATE_END)
     if start == -1 or end == -1:
         return ""
     inner_start = start + len(SLOW_UPDATE_START)
-    return skill[inner_start:end].strip()
+    return prompt[inner_start:end].strip()
 
 
-def _strip_all_slow_update_fields(skill: str) -> str:
-    """从 *skill* 中移除所有 SLOW_UPDATE_START/END 对（及其间内容）。"""
+def _strip_all_slow_update_fields(prompt: str) -> str:
+    """从 *prompt* 中移除所有 SLOW_UPDATE_START/END 对（及其间内容）。"""
     while True:
-        start = skill.find(SLOW_UPDATE_START)
+        start = prompt.find(SLOW_UPDATE_START)
         if start == -1:
             break
-        end = skill.find(SLOW_UPDATE_END, start)
+        end = prompt.find(SLOW_UPDATE_END, start)
         if end == -1:
-            # 孤立的 start 标记 — 移除它
-            skill = skill[:start] + skill[start + len(SLOW_UPDATE_START):]
+            prompt = prompt[:start] + prompt[start + len(SLOW_UPDATE_START):]
             break
-        skill = skill[:start] + skill[end + len(SLOW_UPDATE_END):]
-    # 清理遗留的 end 标记
-    skill = skill.replace(SLOW_UPDATE_END, "")
-    # 合并删除后遗留的多余空行
-    while "\n\n\n" in skill:
-        skill = skill.replace("\n\n\n", "\n\n")
-    return skill.rstrip()
+        prompt = prompt[:start] + prompt[end + len(SLOW_UPDATE_END):]
+    prompt = prompt.replace(SLOW_UPDATE_END, "")
+    while "\n\n\n" in prompt:
+        prompt = prompt.replace("\n\n\n", "\n\n")
+    return prompt.rstrip()
 
 
-def replace_slow_update_field(skill: str, new_content: str) -> str:
-    # 先移除所有已有 slow update 区域，保证恰好保留一个
-    skill = _strip_all_slow_update_fields(skill)
+def replace_slow_update_field(prompt: str, new_content: str) -> str:
+    prompt = _strip_all_slow_update_fields(prompt)
     block = (
         f"\n\n{SLOW_UPDATE_START}\n"
         f"{new_content.strip()}\n"
         f"{SLOW_UPDATE_END}\n"
     )
-    return skill + block
+    return prompt + block
 
 
 # ── 比较文本构建 ─────────────────────────────────────────────────
@@ -287,12 +283,12 @@ def format_comparison_text(pairs: list[dict]) -> str:
 
 
 def run_slow_update(
-    skill_content: str,
+    prompt_content: str,
     results_prev: list[dict],
     results_curr: list[dict],
     items: list[dict],
     *,
-    prev_skill: str = "",
+    prev_prompt: str = "",
     prev_slow_update_content: str = "",
     prev_rollout_dir: str = "",
     curr_rollout_dir: str = "",
@@ -303,7 +299,7 @@ def run_slow_update(
 
     Parameters
     ----------
-    skill_content : str
+    prompt_content : str
         当前 epoch 的 skill（fast update 之后）。
     results_prev : list[dict]
         20 个样本在上一 epoch skill 下的 rollout 结果。
@@ -311,7 +307,7 @@ def run_slow_update(
         20 个样本在当前 epoch skill 下的 rollout 结果。
     items : list[dict]
         用于比较的 20 个样本 item。
-    prev_skill : str
+    prev_prompt : str
         上一 epoch 的 skill 内容。
     prev_slow_update_content : str
         上一 epoch 的 slow update 指导（供反思）。
@@ -339,9 +335,9 @@ def run_slow_update(
         )
     comparison_text = format_comparison_text(pairs)
 
-    prev_skill_display = prev_skill
-    if len(prev_skill_display) > 6000:
-        prev_skill_display = prev_skill_display[:6000] + "\n...[truncated]..."
+    prev_prompt_display = prev_prompt
+    if len(prev_prompt_display) > 6000:
+        prev_prompt_display = prev_prompt_display[:6000] + "\n...[truncated]..."
 
     prev_guidance_section = (
         prev_slow_update_content.strip()
@@ -350,8 +346,8 @@ def run_slow_update(
     )
 
     user = (
-        f"## Previous Epoch's Skill\n{prev_skill_display}\n\n"
-        f"## Current Epoch's Skill\n{skill_content}\n\n"
+        f"## Previous Epoch's Skill\n{prev_prompt_display}\n\n"
+        f"## Current Epoch's Skill\n{prompt_content}\n\n"
         f"## Previous Slow Update Guidance\n"
         f"The following guidance was active during the current epoch. "
         f"Reflect on its effectiveness before writing the new version.\n\n"

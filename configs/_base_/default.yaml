@@ -63,11 +63,11 @@ optimizer:
   min_learning_rate: 2      # min edits for decay schedulers
   lr_scheduler: cosine      # constant / linear / cosine / autonomous
   lr_control_mode: fixed    # fixed / autonomous / none
-  skill_update_mode: patch  # patch / rewrite_from_suggestions / full_rewrite_minibatch
+  prompt_update_mode: patch  # patch / rewrite_from_suggestions / full_rewrite_minibatch
   use_slow_update: true
   slow_update_samples: 20
   longitudinal_pair_policy: mixed  # mixed / changed / unchanged
-  use_meta_skill: true
+  use_meta_prompt: true
 
 evaluation:
   use_gate: true
@@ -77,7 +77,7 @@ evaluation:
 
 env:
   name: ""
-  skill_init: ""
+  prompt_init: ""
   split_mode: ratio       # ratio = build deterministic split from data_path; split_dir = use pre-split train/val/test
   split_ratio: "2:1:7"    # explicit default for dataset-backed benchmarks: train:val:test
   split_seed: 42

@@ -1,8 +1,8 @@
-"""【功能描述】ReflACT skill 操作 — 编辑应用与 patch 处理，ReflACT 流水线 Update 阶段（⑤）：将排序后的编辑集应用到当前 skill 文档，生成更新候选，类比神经网络训练中的 optimizer.step()。
+"""【功能描述】ReflACT prompt 操作 — 编辑应用与 patch 处理，ReflACT 流水线 Update 阶段（⑤）：将排序后的编辑集应用到当前 prompt 文档，生成更新候选，类比神经网络训练中的 optimizer.step()。
 
-【输入】skill 文档字符串、Edit/Patch 实例或 dict。
+【输入】prompt 文档字符串、Edit/Patch 实例或 dict。
 
-【输出】apply_edit/apply_patch 返回更新后的 skill；apply_patch_with_report 另返回逐编辑报告。
+【输出】apply_edit/apply_patch 返回更新后的 prompt；apply_patch_with_report 另返回逐编辑报告。
 """
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ SLOW_UPDATE_START = "<!-- SLOW_UPDATE_START -->"
 SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 
 
-def _is_in_slow_update_region(skill: str, target: str) -> bool:
+def _is_in_slow_update_region(prompt: str, target: str) -> bool:
     """检查 *target* 文本是否落在受保护的 slow update 区域内。"""
-    start_idx = skill.find(SLOW_UPDATE_START)
-    end_idx = skill.find(SLOW_UPDATE_END)
+    start_idx = prompt.find(SLOW_UPDATE_START)
+    end_idx = prompt.find(SLOW_UPDATE_END)
     if start_idx == -1 or end_idx == -1:
         return False
-    target_idx = skill.find(target)
+    target_idx = prompt.find(target)
     if target_idx == -1:
         return False
     region_end = end_idx + len(SLOW_UPDATE_END)
@@ -45,7 +45,7 @@ def _edit_fields(edit: EditType | dict) -> tuple[str, str, str]:
     return op, content, target
 
 
-def _apply_edit_with_report(skill: str, edit: EditType | dict) -> tuple[str, dict]:
+def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, dict]:
     op, content, target = _edit_fields(edit)
     report = {
         "op": op,
@@ -54,78 +54,78 @@ def _apply_edit_with_report(skill: str, edit: EditType | dict) -> tuple[str, dic
         "status": "unknown",
     }
 
-    if target and _is_in_slow_update_region(skill, target):
+    if target and _is_in_slow_update_region(prompt, target):
         report["status"] = "skipped_protected_slow_update_region"
-        return skill, report
+        return prompt, report
 
     if op == "append":
-        su_start = skill.find(SLOW_UPDATE_START)
+        su_start = prompt.find(SLOW_UPDATE_START)
         if su_start != -1:
-            before = skill[:su_start].rstrip()
-            after = skill[su_start:]
+            before = prompt[:su_start].rstrip()
+            after = prompt[su_start:]
             report["status"] = "applied_append_before_slow_update"
             return before + "\n\n" + content + "\n\n" + after, report
         report["status"] = "applied_append"
-        return skill.rstrip() + "\n\n" + content + "\n", report
+        return prompt.rstrip() + "\n\n" + content + "\n", report
 
     if op == "insert_after":
-        if not target or target not in skill:
-            su_start = skill.find(SLOW_UPDATE_START)
+        if not target or target not in prompt:
+            su_start = prompt.find(SLOW_UPDATE_START)
             if su_start != -1:
-                before = skill[:su_start].rstrip()
-                after = skill[su_start:]
+                before = prompt[:su_start].rstrip()
+                after = prompt[su_start:]
                 report["status"] = "applied_insert_after_fallback_before_slow_update"
                 return before + "\n\n" + content + "\n\n" + after, report
             report["status"] = "applied_insert_after_fallback_append"
-            return skill.rstrip() + "\n\n" + content + "\n", report
-        idx = skill.index(target) + len(target)
-        newline = skill.find("\n", idx)
-        insert_at = newline + 1 if newline != -1 else len(skill)
+            return prompt.rstrip() + "\n\n" + content + "\n", report
+        idx = prompt.index(target) + len(target)
+        newline = prompt.find("\n", idx)
+        insert_at = newline + 1 if newline != -1 else len(prompt)
         report["status"] = "applied_insert_after"
-        return skill[:insert_at] + "\n" + content + "\n" + skill[insert_at:], report
+        return prompt[:insert_at] + "\n" + content + "\n" + prompt[insert_at:], report
 
     if op == "replace":
         if not target:
             report["status"] = "skipped_replace_missing_target"
-            return skill, report
-        if target not in skill:
+            return prompt, report
+        if target not in prompt:
             report["status"] = "skipped_replace_target_not_found"
-            return skill, report
+            return prompt, report
         report["status"] = "applied_replace"
-        return skill.replace(target, content, 1), report
+        return prompt.replace(target, content, 1), report
 
     if op == "delete":
         if not target:
             report["status"] = "skipped_delete_missing_target"
-            return skill, report
-        if target not in skill:
+            return prompt, report
+        if target not in prompt:
             report["status"] = "skipped_delete_target_not_found"
-            return skill, report
+            return prompt, report
         report["status"] = "applied_delete"
-        return skill.replace(target, "", 1), report
+        return prompt.replace(target, "", 1), report
 
     report["status"] = "skipped_unknown_op"
-    return skill, report
+    return prompt, report
 
 
-def apply_edit(skill: str, edit: EditType | dict) -> str:
-    """将单条编辑操作应用到 skill 文档。
+def apply_edit(prompt: str, edit: EditType | dict) -> str:
+    """将单条编辑操作应用到 prompt 文档。
 
     Parameters
     ----------
-    skill : str
-        当前 skill 文档内容。
+    prompt : str
+        当前 prompt 文档内容。
     edit : Edit | dict
         :class:`~skillopt.types.Edit` 实例或含 ``op``、``content``、``target`` 键的普通 dict。
 
     针对受保护 slow-update 区域的编辑会被静默跳过。
     """
-    updated_skill, _ = _apply_edit_with_report(skill, edit)
+    updated_skill, _ = _apply_edit_with_report(prompt, edit)
     return updated_skill
 
 
 def apply_patch_with_report(
-    skill: str,
+    prompt: str,
     patch: PatchType | dict,
 ) -> tuple[str, list[dict]]:
     """应用 patch 并返回逐编辑报告，便于观测。"""
@@ -133,7 +133,7 @@ def apply_patch_with_report(
     reports: list[dict] = []
     for idx, edit in enumerate(edits, 1):
         try:
-            skill, report = _apply_edit_with_report(skill, edit)
+            prompt, report = _apply_edit_with_report(prompt, edit)
             report["index"] = idx
         except Exception as exc:  # noqa: BLE001
             report = {
@@ -145,18 +145,18 @@ def apply_patch_with_report(
                 "error": str(exc),
             }
         reports.append(report)
-    return skill, reports
+    return prompt, reports
 
 
-def apply_patch(skill: str, patch: PatchType | dict) -> str:
-    """顺序将 patch（编辑列表）应用到 skill 文档。
+def apply_patch(prompt: str, patch: PatchType | dict) -> str:
+    """顺序将 patch（编辑列表）应用到 prompt 文档。
 
     Parameters
     ----------
-    skill : str
-        当前 skill 文档内容。
+    prompt : str
+        当前 prompt 文档内容。
     patch : Patch | dict
         :class:`~skillopt.types.Patch` 实例或含 ``edits`` 编辑操作列表键的普通 dict。
     """
-    updated_skill, _ = apply_patch_with_report(skill, patch)
+    updated_skill, _ = apply_patch_with_report(prompt, patch)
     return updated_skill

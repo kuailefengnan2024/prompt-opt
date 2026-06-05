@@ -23,7 +23,7 @@ EditOp = Literal["append", "insert_after", "replace", "delete"]
 
 @dataclass
 class Edit:
-    """对 skill 文档的单条编辑操作。
+    """对可优化 prompt 文档的单条编辑操作。
 
     用于 Reflect → Aggregate → Select → Update → MetaReflect 各阶段。
     """

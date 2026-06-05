@@ -1,6 +1,6 @@
 """【功能描述】ReflACT 核心 Reflect 引擎 — minibatch trajectory 分析；提供与环境无关的 minibatch trajectory 分析：将 trajectory 分组为大小 M 的 minibatch 一并分析，类比神经网络训练中的 minibatch SGD 与逐样本 SGD。
 
-【输入】results、skill_content、prediction_dir、patches_dir、minibatch 与 edit 预算等配置。
+【输入】results、prompt_content、prediction_dir、patches_dir、minibatch 与 edit 预算等配置。
 
 【输出】fmt_trajectory 等格式化函数；run_minibatch_reflect 返回含 source_type 的 patch dict 列表。
 
@@ -26,7 +26,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from skillopt.model import chat_optimizer
-from skillopt.optimizer.meta_skill import format_meta_skill_context
+from skillopt.optimizer.meta_prompt import format_meta_prompt_context
 from skillopt.optimizer.update_modes import (
     get_payload_items,
     is_full_rewrite_minibatch_mode,
@@ -247,7 +247,7 @@ def _resolve_prompt(custom: str | None, default_name: str, update_mode: str = "p
 
 
 def run_error_analyst_minibatch(
-    skill_content: str,
+    prompt_content: str,
     items: list[dict],
     prediction_dir: str,
     edit_budget: int = 4,
@@ -256,15 +256,15 @@ def run_error_analyst_minibatch(
     rejection_context: str = "",
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
     """单次 optimizer 调用分析一组失败 trajectory 的 minibatch。
 
     Parameters
     ----------
-    skill_content : str
-        当前 skill 文档文本。
+    prompt_content : str
+        当前 prompt 文档文本。
     items : list[dict]
         Rollout 结果 dict（均应 ``hard=0``）。
     prediction_dir : str
@@ -293,12 +293,12 @@ def run_error_analyst_minibatch(
         return None
 
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Skill\n{prompt_content}\n\n"
     )
     if is_full_rewrite_minibatch_mode(mode):
         user += (
             f"## Update Format\n"
-            f"Produce one complete replacement skill candidate for this minibatch. "
+            f"Produce one complete replacement prompt candidate for this minibatch. "
             f"Do not output edits, patches, or revise suggestions.\n\n"
         )
     else:
@@ -312,7 +312,7 @@ def run_error_analyst_minibatch(
         ctx = f"{ctx}\n{trajectory_memory_context}" if ctx else trajectory_memory_context
     if ctx.strip():
         user += f"## Previous Steps in This Epoch\n{ctx}\n\n"
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user += optimizer_ctx + "\n\n"
     user += f"## Failed Trajectories ({len(items)} total)\n{trajectories_text}"
@@ -336,7 +336,7 @@ def run_error_analyst_minibatch(
 
 
 def run_success_analyst_minibatch(
-    skill_content: str,
+    prompt_content: str,
     items: list[dict],
     prediction_dir: str,
     edit_budget: int = 4,
@@ -344,7 +344,7 @@ def run_success_analyst_minibatch(
     system_prompt: str | None = None,
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
     """单次 optimizer 调用分析一组成功 trajectory 的 minibatch。
@@ -371,12 +371,12 @@ def run_success_analyst_minibatch(
         return None
 
     user = (
-        f"## Current Skill\n{skill_content}\n\n"
+        f"## Current Skill\n{prompt_content}\n\n"
     )
     if is_full_rewrite_minibatch_mode(mode):
         user += (
             f"## Update Format\n"
-            f"Produce one complete replacement skill candidate for this minibatch. "
+            f"Produce one complete replacement prompt candidate for this minibatch. "
             f"Do not output edits, patches, or revise suggestions.\n\n"
         )
     else:
@@ -387,7 +387,7 @@ def run_success_analyst_minibatch(
     ctx = step_buffer_context or trajectory_memory_context or ""
     if ctx.strip():
         user += f"## Previous Steps in This Epoch\n{ctx}\n\n"
-    optimizer_ctx = format_meta_skill_context(meta_skill_context)
+    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
     if optimizer_ctx:
         user += optimizer_ctx + "\n\n"
     user += f"## Successful Trajectories ({len(items)} total)\n{trajectories_text}"
@@ -433,7 +433,7 @@ def _shuffle_for_minibatch(items: list, seed: int | None) -> list:
 
 def run_minibatch_reflect(
     results: list[dict],
-    skill_content: str,
+    prompt_content: str,
     prediction_dir: str,
     patches_dir: str,
     workers: int,
@@ -447,7 +447,7 @@ def run_minibatch_reflect(
     rejection_context: str = "",
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
-    meta_skill_context: str = "",
+    meta_prompt_context: str = "",
     update_mode: str = "patch",
 ) -> list[dict | None]:
     """完整 minibatch reflect 阶段：分组 → 并行 optimizer 调用 → patch。
@@ -459,8 +459,8 @@ def run_minibatch_reflect(
     ----------
     results : list[dict]
         Rollout 结果 dict；见 :class:`~skillopt.types.RolloutResult`。
-    skill_content : str
-        当前 skill 文档。
+    prompt_content : str
+        当前 prompt 文档。
     prediction_dir : str
         含 ``conversation.json`` 的 ``predictions/`` 路径。
     patches_dir : str
@@ -529,26 +529,26 @@ def run_minibatch_reflect(
     # ── Worker 函数 ──────────────────────────────────────────────────
     def _do_fail(idx: int, batch: list[dict]) -> tuple[str, dict | None]:
         patch = run_error_analyst_minibatch(
-            skill_content, batch, prediction_dir,
+            prompt_content, batch, prediction_dir,
             edit_budget=edit_budget,
             system_prompt=error_system,
             step_buffer_context=step_buffer_context,
             # 向后兼容回退
             rejection_context=rejection_context,
             trajectory_memory_context=trajectory_memory_context,
-            meta_skill_context=meta_skill_context,
+            meta_prompt_context=meta_prompt_context,
             update_mode=update_mode,
         )
         return f"minibatch_fail_{idx:03d}", patch
 
     def _do_succ(idx: int, batch: list[dict]) -> tuple[str, dict | None]:
         patch = run_success_analyst_minibatch(
-            skill_content, batch, prediction_dir,
+            prompt_content, batch, prediction_dir,
             edit_budget=edit_budget,
             system_prompt=success_system,
             step_buffer_context=step_buffer_context,
             trajectory_memory_context=trajectory_memory_context,
-            meta_skill_context=meta_skill_context,
+            meta_prompt_context=meta_prompt_context,
             update_mode=update_mode,
         )
         return f"minibatch_succ_{idx:03d}", patch

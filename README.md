@@ -1,243 +1,151 @@
-# prompt-opt：基于 SkillOpt 的 T2I Prompt 优化
+# prompt-opt：T2I Prompt 优化（SkillOpt / Direct）
 
-*Fork 自 [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt)。保留 Reflect + Gate 训练循环，面向文生图（T2I）prompt 的迭代优化。*
+Fork [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt)，**Reflect + Gate**，**固定 brief → 最优 T2I prompt**。
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Upstream SkillOpt](https://img.shields.io/badge/Upstream-SkillOpt-8dbb3c)](https://github.com/microsoft/SkillOpt)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
----
-
-## 维护者上下文
-
-> 供 Agent 与协作者了解的背景、算力与工程约束。
-
-### 1. 硬件与模型 API
-- **身份**：字节跳动内部工程师
-- **本地**：Intel i9-10980XE @3.0GHz（18 核 36 线程）+ NVIDIA RTX 4090 24GB + Windows x64
-- **API**：内部 **LLM / VLM / T2I** SOTA 模型；开发/调试成本约束宽松
-- **云端**：可按需申请 NVIDIA A100
-- **调度**：轻量/敏感调试走本地 4090；中大型训练/推理/微调走云端 A100
-- **美学评分**：自定义图像美学 rubric（主奖励信号）
-
-### 2. 代码与架构
-- **架构**：高内聚低耦合、SOLID；拒绝「能跑就行」的临时代码
-- **文件头（强制）**：每个代码文件开头三行 — **【功能描述】/【输入】/【输出】**（中文）
-- **TCE 友好**：配置、密钥、环境信息通过环境变量注入；禁止硬编码凭证
-- **`.gitignore`**：虚拟环境、密钥、图片资产、数据集、大文件缓存不入库
-
-### 3. 测试与 README
-- 测试脚本：可调参数置于脚本顶部，自包含运行，不用 `--mode=test` 等 Flag
-- README：Mermaid 图、目录树 + 一句话职责、Inputs/Outputs、踩坑；重大变更及时同步
+**快照分支：** `backup/pre-t2i-direct`
 
 ---
 
-## 两种运行模式
+## 术语
 
-> 共用 Reflect + Gate 循环；差异在于 **skill 文档语义** 与 **rollout 路径**。
+| 概念 | 键 / 产物 | 说明 |
+|------|-----------|------|
+| **prompt** | `prompt_init`、`prompts/prompt_vNNNN.md` | 优化对象，T2I 正文 |
+| **best prompt** | `best_prompt.md` | 验收通过的历史最优 |
+| **brief** | `data/.../*.json` | 固定业务约束，不改 |
+| **rubric** | 适配器打分逻辑 | 审美维度 → `hard`/`soft` |
+| **API 配置** | `.env`、`configs/` | T2I / LLM / VLM endpoint，非 prompt 正文 |
+| **train_runs** | `env.train_runs` | Rollout 重复出图次数（无 seed） |
+| **gate_runs** | `env.gate_runs` | Gate 验收重复出图次数 |
 
-| 模式 | Skill 文档 | Rollout | 状态 |
-|---|---|---|---|
-| **`direct`（当前）** | **Skill = T2I prompt 正文** → 直连 T2I | prompt → T2I（多种子）→ 美学分 | **当前目标** |
-| **`meta`（未来）** | **Skill = 写 prompt 的规则** → LLM(skill + brief) → prompt → T2I → 打分 | 多一层 LLM 将设计 brief 转为 prompt | **TODO** |
+| YAML（结构化） | 扁平（trainer） |
+|----------------|-----------------|
+| `env.prompt_init` | `prompt_init` |
+| `optimizer.prompt_update_mode` | `prompt_update_mode` |
+| `optimizer.use_meta_prompt` | `use_meta_prompt` |
+| `env.best_prompt_file` | `best_prompt_file` |
+| `env.prompt_version_dir` | `prompt_version_dir` |
+| `env.prompt_version_prefix` | `prompt_version_prefix` |
+
+| 不改名 | 原因 |
+|--------|------|
+| Python 包 `skillopt` | 上游 fork 根包名 |
+| 目录 `skillopt/prompts/` | Optimizer LLM 模板，`load_prompt(name)` |
+| `codex_harness` 内 SKILL.md | Codex 工作区约定，非 T2I prompt |
+
+---
+
+## 设计结论
+
+| 议题 | 结论 |
+|------|------|
+| 模式 | **direct**：优化 prompt 正文 |
+| meta | TODO；首版不做 |
+| 随机性 | 无 seed；`train_runs` / `gate_runs` 多次调用取均分 |
+| 初始 prompt | 必填 `prompt_init` |
+| 收敛 | 无 loss / 早停；看 `best_score` |
+
+---
+
+## Direct 流程
 
 ```mermaid
 flowchart TB
-    subgraph direct ["当前 mode=direct"]
-        D1["Skill = prompt 正文"] --> D2["T2I 多种子"] --> D3["美学分"]
+    subgraph fixed ["固定"]
+        BRIEF["brief"]
+        API["API 配置"]
+        RUBRIC["rubric"]
     end
-    subgraph meta ["未来 mode=meta"]
-        M1["Skill = 写作规则"] --> M2["LLM + brief"] --> M3["生成 prompt"] --> M4["T2I"] --> M5["打分"]
-    end
-    D3 --> Reflect["LLM Reflect 编辑 skill"]
-    M5 --> Reflect
-    Reflect --> Gate["Gate：新种子重评"]
+    P0["initial.md"] --> R1["① Rollout"]
+    R1 --> R2["② Reflect"] --> R3["③④"] --> R4["⑤ 候选"]
+    R4 --> G1["⑥ Gate"] --> G2{"均分更高?"}
+    G2 -->|是| OK["更新 best"]
+    G2 -->|否| NO["保留"]
+    fixed -.-> R1
+    fixed -.-> G1
+    OK --> R1
+    NO --> R1
+    OK --> OUT["best_prompt.md"]
 ```
 
-配置：`configs/t2i/default.yaml` → `env.mode: direct | meta`（`meta` 尚未实现）。
+| 阶段 | 含义 |
+|------|------|
+| ① | 当前 prompt × `train_runs` → 均分 |
+| ② | 低分 → patches |
+| ③④ | 合并；`edit_budget` |
+| ⑤ | 候选 prompt |
+| ⑥ | 候选 × `gate_runs`；高于 current 才 accept |
 
 ---
 
-## 项目目标
+## 模式 / 上游
 
-### 当前：单一 brief → 最优 T2I prompt
+| 模式 | 优化对象 | 状态 |
+|------|----------|------|
+| direct | prompt | **当前** |
+| meta | 写 prompt 规则 | TODO |
 
-| 维度 | 说明 |
-|---|---|
-| **问题** | 给定**固定**设计 brief（标题、副标题、约束），迭代求**得分最高**的 T2I prompt |
-| **优化对象** | **Prompt 文本**（产物 `best_skill.md`）；**不**训练设计 brief |
-| **设计 brief** | 固定输入，不参与训练；可为单条样本 |
-| **奖励** | **在线**：当前 prompt → T2I（多种子）→ 图像 → 美学/VLM 分 → 取平均 |
-| **Gate** | 同一 brief、**新种子** 重生成与打分，避免偶然高分 |
-| **栈** | **direct 模式**：prompt 直连 T2I；Reflect 用 LLM 分析低分并改 prompt |
-
-**固定输入示例：**
-
-```json
-{
-  "id": "poster_main",
-  "main_title": "Summer Music Festival",
-  "sub_title": "2026 · Beijing",
-  "requirements": "cyberpunk; blue-purple palette; 16:9; reserve main title area"
-}
-```
-
-**奖励（在线生成，非预标注）：**
-
-```
-当前 prompt → T2I（N 个种子）→ N 张图 → 美学分 → 均值 = 步奖励
-Reflect 用种子集 A；Gate 用种子集 B（同一 brief、不同种子）
-```
-
-无需静态 `(prompt, score)` 数据集。
-
-### 为何不做「按设计稿划分 train/val」？
-
-| | 上游 SkillOpt（多 benchmark） | 本项目（当前） |
-|--|-------------|----------------|
-| 优化对象 | 跨任务 skill | 单一 T2I prompt |
-| train / val | 不同任务、泛化 | **同一 brief**；用 `train_seeds` / `gate_seeds` 区分 |
-| 奖励 | EM/F1、环境成功 | T2I + 美学（多种子均值） |
-
-上游六个 benchmark（SearchQA、ALFWorld 等）在 `backup/archive/benchmarks/`。**日常 T2I 工作不必依赖**；扩展路径见下文。
+| | 上游 SkillOpt | 本项目 |
+|--|---------------|--------|
+| 对象 | Agent Skill | T2I **prompt** |
+| 产物 | `best_skill.md` | **`best_prompt.md`** |
+| 版本目录 | `skills/` | **`prompts/`** |
 
 ---
 
-## configs 与 skillopt/envs
-
-**`configs/{name}/`** = 实验配方（超参、路径）；**`skillopt/envs/{name}/`** = rollout / 打分 / reflect。YAML 中 `env.name` 绑定适配器。
-
-```mermaid
-flowchart LR
-    base["_base_/default.yaml"] --> cfg["t2i/default.yaml"]
-    cfg -->|"env.name: t2i"| adapter["envs/t2i/adapter.py"]
-    registry["envs/registry.py"] --> adapter
-    train["scripts/train.py"] --> registry
-```
+## 配置与目录
 
 | 路径 | 职责 |
-|---|---|
-| `configs/_base_/default.yaml` | 全局默认 |
-| `configs/t2i/default.yaml` | T2I prompt 配方（`mode: direct`） |
-| `skillopt/envs/t2i/` | T2I 环境（**待实现**） |
-| `skillopt/envs/base.py` | `EnvAdapter` 接口 |
-| `skillopt/envs/registry.py` | 环境注册表 |
-| `skillopt/envs/_template/` | 新环境脚手架 |
-
-### 扩展 benchmark
-
-1. 复制 `_template/` → `skillopt/envs/{name}/`，实现 `adapter / rollout / evaluator`
-2. 新增 `configs/{name}/default.yaml`，设置 `env.name: {name}`
-3. 在 `skillopt/envs/registry.py` 的 `_BUILTIN_ENVS` 追加一行，或运行时 `register_env()`
-
-上游六 benchmark：`backup/archive/benchmarks/`。
-
----
-
-## 目录结构
-
-```
-prompt-opt/
-├── configs/
-│   ├── _base_/default.yaml
-│   └── t2i/default.yaml
-├── scripts/
-│   ├── train.py
-│   ├── eval_only.py
-│   └── backup.py
-├── skillopt/
-│   ├── engine/trainer.py       # Reflect + Gate 主循环
-│   ├── optimizer/ gradient/ evaluation/
-│   ├── model/ prompts/ utils/
-│   └── envs/
-│       ├── base.py registry.py
-│       ├── _template/
-│       └── t2i/                # 待实现
-├── skillopt_webui/             # 可选 Gradio UI
-├── backup/archive/
-│   ├── benchmarks/             # 上游 6 benchmark + 配置
-│   ├── docs_site/ website/ shell/ misc/
-│   └── ...
-├── pyproject.toml
-└── .env.example
-```
-
-### 踩坑
-
-| 问题 | 处理 |
-|---|---|
-| `Unknown environment 't2i'` | 实现 `skillopt/envs/t2i/` 并注册 |
-| 单 brief、无 val 划分 | `train/` 与 `val/` 放同一条；Gate 用 `gate_seeds` |
-| 分数噪声大 | 增加种子数；均值或中位数 |
-| 上游 SearchQA 等 | 见 `backup/archive/benchmarks/` |
-
-### 输入 / 输出
-
-| 类型 | 说明 |
-|---|---|
-| **输入** | 固定设计 brief JSON；`skillopt/envs/t2i/skills/initial.md` 种子 prompt |
-| **输入** | `configs/t2i/default.yaml`；LLM / T2I / VLM API（`.env`） |
-| **输出** | `outputs/<run>/best_skill.md` — **最优 T2I prompt** |
-| **输出** | `outputs/<run>/steps/step_XXXX/` — 图像、分数、Reflect 轨迹 |
-
----
-
-## 安装
-
-**要求：** Python 3.10+
-
-```bash
-cd prompt-opt
-pip install -e .
-# 可选 WebUI：pip install -e ".[webui]"
-```
-
-```bash
-cp .env.example .env
-# 填写 LLM / T2I / VLM API 凭证（环境变量）
-```
-
----
-
-## 快速开始
-
-> 在实现 `skillopt/envs/t2i/` 后可运行。
-
-```bash
-python scripts/train.py \
-    --config configs/t2i/default.yaml \
-    --split_dir data/t2i_split \
-    --out_root outputs/t2i_run
-```
-
-| 参数 | 说明 |
-|---|---|
-| `--config` | 配置 YAML |
-| `--split_dir` | 含 `train/`、`val/` 的目录（两边放同一 brief 亦可） |
-| `--out_root` | 输出目录 |
-| `--num_epochs` | 训练 epoch 数 |
-
-产物 **`outputs/<run>/best_skill.md`** 即为优化后的 prompt 正文。
-
-### 输出目录
+|------|------|
+| `configs/t2i/default.yaml` | `prompt_init`、`train_runs`、`gate_runs` |
+| `skillopt/envs/t2i/prompts/initial.md` | 初始 prompt |
+| `skillopt/envs/t2i/` | adapter（待实现） |
+| `skillopt/engine/trainer.py` | ReflACT 主循环 |
+| `skillopt/optimizer/prompt_editor.py` | patch 应用 |
 
 ```
 outputs/<run>/
-├── best_skill.md            # 最优 prompt
-├── history.json
-├── runtime_state.json       # 断点续训
-└── steps/step_XXXX/         # 图像、分数、patches
+├── best_prompt.md
+├── prompts/prompt_v0001.md
+└── steps/step_XXXX/
 ```
 
 ---
 
-## WebUI（可选）
+## 运行
 
 ```bash
-pip install -e ".[webui]"
-python -m skillopt_webui.app
+pip install -e . && cp .env.example .env
+python scripts/train.py --config configs/t2i/default.yaml \
+  --split_dir data/t2i_split --out_root outputs/t2i_run
 ```
+
+| CLI | 说明 |
+|-----|------|
+| `--prompt_init` | 初始 prompt |
+| `--prompt_update_mode` | `patch` / `rewrite_from_suggestions` / … |
+| `--use_meta_prompt` | 跨 epoch 优化器记忆 |
+
+```bash
+python scripts/eval_only.py --config configs/t2i/default.yaml \
+  --prompt skillopt/envs/t2i/prompts/initial.md --out_root outputs/eval
+```
+
+---
+
+## 踩坑
+
+| 问题 | 处理 |
+|------|------|
+| 旧 `best_skill.md` | 续训可读；新 run 写 `best_prompt.md` |
+| 旧 `runtime_state` 键 | 兼容读 `current_skill_path` / `best_skill_path` |
+| 旧 `meta_skill/` 目录 | 兼容读；新 run 用 `meta_prompt/` |
+| 无 `prompt_init` | 必填 |
 
 ---
 
 ## 上游
 
-训练循环来自 Microsoft SkillOpt — [arXiv:2605.23904](https://arxiv.org/abs/2605.23904)。原始 benchmark 与文档：`backup/archive/`。
+[SkillOpt](https://github.com/microsoft/SkillOpt) · `backup/archive/`

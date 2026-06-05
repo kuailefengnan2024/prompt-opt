@@ -3,16 +3,16 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "skillopt"
+name = "promptopt"
 version = "0.1.0"
-description = "prompt-opt: T2I prompt optimization via Reflect + Gate (fork of SkillOpt)"
+description = "prompt-opt: T2I prompt optimization via Reflect + Gate"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "SkillOpt Team"},
+    {name = "prompt-opt Team"},
 ]
-keywords = ["agent", "prompt-optimization", "skill-learning", "LLM", "agentic"]
+keywords = ["agent", "prompt-optimization", "prompt-learning", "LLM", "agentic"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -48,8 +48,8 @@ all = [
 ]
 
 [project.scripts]
-skillopt-train = "scripts.train:main"
-skillopt-eval = "scripts.eval_only:main"
+promptopt-train = "scripts.train:main"
+promptopt-eval = "scripts.eval_only:main"
 
 [project.urls]
 Homepage = "https://github.com/microsoft/SkillOpt"
@@ -58,7 +58,7 @@ Repository = "https://github.com/microsoft/SkillOpt"
 Issues = "https://github.com/microsoft/SkillOpt/issues"
 
 [tool.setuptools.packages.find]
-include = ["skillopt*", "scripts*"]
+include = ["promptopt*", "scripts*"]
 
 [tool.ruff]
 line-length = 120

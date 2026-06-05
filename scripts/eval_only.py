@@ -7,7 +7,7 @@
 -----
     python scripts/eval_only.py \\
         --config configs/t2i/default.yaml \\
-        --prompt skillopt/envs/t2i/prompts/initial.md \\
+        --prompt promptopt/envs/t2i/prompts/initial.md \\
         --split_dir data/t2i_split \\
         --out_root outputs/eval_run
 
@@ -26,7 +26,7 @@ _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from skillopt.model import (
+from promptopt.model import (
     configure_azure_openai,
     configure_claude_code_exec,
     configure_codex_exec,
@@ -36,13 +36,13 @@ from skillopt.model import (
     set_optimizer_backend,
     set_optimizer_deployment,
 )
-from skillopt.model.common import default_model_for_backend, normalize_backend_name
+from promptopt.model.common import default_model_for_backend, normalize_backend_name
 
 _OPENAI_DEFAULT_MODEL_SENTINELS = {"gpt-5.4", "gpt-5.5"}
-from skillopt.utils import compute_score
+from promptopt.utils import compute_score
 
 
-from skillopt.envs.registry import get_adapter  # noqa: E402
+from promptopt.envs.registry import get_adapter  # noqa: E402
 
 
 # ── 命令行接口 ────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ _BOOL = lambda x: str(x).lower() in ("true", "1", "yes")  # noqa: E731
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="SkillOpt eval-only")
+    p = argparse.ArgumentParser(description="prompt-opt eval-only")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--prompt", type=str, required=True,
                    help="Path to prompt .md file to evaluate")
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    from skillopt.config import load_config as _load, flatten_config, is_structured
+    from promptopt.config import load_config as _load, flatten_config, is_structured
 
     cfg = _load(args.config, overrides=args.cfg_options)
     structured = is_structured(cfg)
@@ -136,7 +136,7 @@ def main() -> None:
            if v is not None and k not in ("config", "prompt", "split", "cfg_options")}
     if cli:
         if structured:
-            from skillopt.config import apply_overrides
+            from promptopt.config import apply_overrides
             _MAP = {
                 "backend": "model.backend",
                 "optimizer_model": "model.optimizer",

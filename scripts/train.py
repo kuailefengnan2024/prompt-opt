@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""【功能描述】SkillOpt 统一训练入口，加载配置并启动 ReflACT 训练循环。
+"""【功能描述】prompt-opt 统一训练入口，加载配置并启动 Reflect 训练循环。
 【输入】命令行参数（--config、--cfg-options 及遗留扁平覆盖项）、YAML 配置文件。
 【输出】在 out_root 下写入训练产物与 summary；控制台打印运行摘要。
 
@@ -21,18 +21,18 @@ import datetime
 import os
 import sys
 
-# 将项目根目录加入 sys.path，以便无论从何处调用脚本都能 ``import skillopt``
+# 将项目根目录加入 sys.path，以便无论从何处调用脚本都能 ``import promptopt``
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from skillopt.model.common import default_model_for_backend, normalize_backend_name
+from promptopt.model.common import default_model_for_backend, normalize_backend_name
 
 _OPENAI_DEFAULT_MODEL_SENTINELS = {"gpt-5.4", "gpt-5.5"}
 
 
-from skillopt.envs.registry import get_adapter  # noqa: E402
+from promptopt.envs.registry import get_adapter  # noqa: E402
 
 
 # ── 命令行接口 ──────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ _BOOL = lambda x: x.lower() in ("true", "1", "yes")  # noqa: E731
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="SkillOpt: Executive Strategy for Self-Evolving Agent Skills",
+        description="prompt-opt: Executive Strategy for Self-Evolving T2I Prompts",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -253,7 +253,7 @@ _LEGACY_TO_STRUCTURED: dict[str, str] = {
 
 def load_config(args: argparse.Namespace) -> dict:
     """加载含 _base_ 继承的配置，再应用 CLI 覆盖。"""
-    from skillopt.config import load_config as _load, flatten_config, is_structured
+    from promptopt.config import load_config as _load, flatten_config, is_structured
 
     cfg = _load(args.config, overrides=args.cfg_options)
     structured = is_structured(cfg)
@@ -263,7 +263,7 @@ def load_config(args: argparse.Namespace) -> dict:
            if v is not None and k not in ("config", "cfg_options")}
     if cli:
         if structured:
-            from skillopt.config import apply_overrides
+            from promptopt.config import apply_overrides
             mapped = []
             for k, v in cli.items():
                 dotted = _LEGACY_TO_STRUCTURED.get(k)
@@ -357,7 +357,7 @@ def load_config(args: argparse.Namespace) -> dict:
         env = flat.get("env", "unknown")
         model = flat.get("optimizer_model", "unknown").replace("/", "-")
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        flat["out_root"] = os.path.join("outputs", f"skillopt_{env}_{model}_{ts}")
+        flat["out_root"] = os.path.join("outputs", f"promptopt_{env}_{model}_{ts}")
 
     flat["out_root"] = os.path.abspath(flat["out_root"])
     return flat
@@ -370,7 +370,7 @@ def main() -> None:
     cfg = load_config(args)
 
     print(f"\n{'='*60}")
-    print(f"  SkillOpt — Executive Strategy for Self-Evolving Agent Skills")
+    print(f"  prompt-opt — Executive Strategy for Self-Evolving T2I Prompts")
     print(f"{'='*60}")
     print(f"  env:            {cfg.get('env')}")
     print(f"  optimizer_model:  {cfg.get('optimizer_model')}")
@@ -398,8 +398,8 @@ def main() -> None:
     adapter = get_adapter(cfg)
 
     # 构建 trainer 并运行
-    from skillopt.engine.trainer import ReflACTTrainer
-    trainer = ReflACTTrainer(cfg, adapter)
+    from promptopt.engine.trainer import ReflectTrainer
+    trainer = ReflectTrainer(cfg, adapter)
     summary = trainer.train()
 
     print(f"\n  Output saved to: {cfg['out_root']}")

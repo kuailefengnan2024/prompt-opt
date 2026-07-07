@@ -13,13 +13,11 @@ from promptopt.model import chat_optimizer
 from promptopt.optimizer.meta_prompt import format_meta_prompt_context
 from promptopt.optimizer.update_modes import (
     get_payload_items,
-    is_full_rewrite_minibatch_mode,
-    is_rewrite_mode,
     normalize_update_mode,
     payload_key,
     payload_label,
 )
-from promptopt.llm_templates import load_template
+from promptopt.templates import fill_prompt, has_prompt
 from promptopt.utils import extract_json
 
 
@@ -32,21 +30,31 @@ def _merge_batch(
     update_mode: str,
     meta_prompt_context: str = "",
     level: int = 1,
+    label: str = "",
 ) -> dict:
     """调用 optimizer LLM 将一批 patch 合并为一个。"""
     patches_text = json.dumps(patches, ensure_ascii=False, indent=2)
-    user = (
-        f"## Current Prompt\n{prompt_content}\n\n"
-        f"## Patches to merge ({len(patches)} total, merge level {level})\n{patches_text}"
-    )
     optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
-    if optimizer_ctx:
-        user = f"{optimizer_ctx}\n\n{user}"
+
+    if not has_prompt("merge_failure"):
+        raise FileNotFoundError("缺少模板 promptopt/prompts/merge_failure.md")
+    tmpl = "merge_failure" if label == "failure" else "merge_success"
+    if not has_prompt(tmpl):
+        raise FileNotFoundError(f"缺少模板 promptopt/prompts/{tmpl}.md")
+    user = fill_prompt(tmpl, {
+        "current_prompt": prompt_content,
+        "patch_count": str(len(patches)),
+        "merge_level": str(level),
+        "patches_json": patches_text,
+    })
+    if optimizer_ctx.strip():
+        user = f"{optimizer_ctx.strip()}\n\n{user}"
+    system = ""
     try:
         response, _ = chat_optimizer(
-            system=system_prompt,
+            system=system,
             user=user,
-            max_completion_tokens=64000 if is_full_rewrite_minibatch_mode(update_mode) else 4096,
+            max_completion_tokens=4096,
             retries=3,
             stage="merge",
         )
@@ -117,7 +125,7 @@ def _hierarchical_merge(
                 futs = {
                     ex.submit(
                         _merge_batch, prompt_content, batch, system_prompt, update_mode,
-                        meta_prompt_context, level,
+                        meta_prompt_context, level, label,
                     ): idx
                     for idx, batch in to_merge
                 }
@@ -166,27 +174,15 @@ def merge_patches(
         )
 
     update_mode = normalize_update_mode(update_mode)
-    if is_full_rewrite_minibatch_mode(update_mode):
-        merge_failure_prompt = load_template("merge_failure_full_rewrite")
-        merge_success_prompt = load_template("merge_success_full_rewrite")
-        merge_final_prompt = load_template("merge_final_full_rewrite")
-    elif is_rewrite_mode(update_mode):
-        merge_failure_prompt = load_template("merge_failure_rewrite")
-        merge_success_prompt = load_template("merge_success_rewrite")
-        merge_final_prompt = load_template("merge_final_rewrite")
-    else:
-        merge_failure_prompt = load_template("merge_failure")
-        merge_success_prompt = load_template("merge_success")
-        merge_final_prompt = load_template("merge_final")
 
     failure_merged = _hierarchical_merge(
-        prompt_content, failure_patches, merge_failure_prompt, update_mode,
+        prompt_content, failure_patches, "", update_mode,
         batch_size, verbose, label="failure", workers=workers,
         meta_prompt_context=meta_prompt_context,
     )
 
     success_merged = _hierarchical_merge(
-        prompt_content, success_patches, merge_success_prompt, update_mode,
+        prompt_content, success_patches, "", update_mode,
         batch_size, verbose, label="success", workers=workers,
         meta_prompt_context=meta_prompt_context,
     )
@@ -203,35 +199,22 @@ def merge_patches(
 
     combined_patches = [failure_merged, success_merged]
     combined_text = json.dumps(combined_patches, ensure_ascii=False, indent=2)
-    if is_full_rewrite_minibatch_mode(update_mode):
-        item_label = payload_label(update_mode)
-        user = (
-            f"## Current Prompt\n{prompt_content}\n\n"
-            f"## Two pre-merged candidate groups to combine\n"
-            f"Group 1 (from failed trajectories): "
-            f"{len(f_edits)} {item_label}\n"
-            f"Group 2 (from successful trajectories): "
-            f"{len(s_edits)} {item_label}\n\n"
-            f"{combined_text}"
-        )
-    else:
-        user = (
-            f"## Current Prompt\n{prompt_content}\n\n"
-            f"## Two pre-merged patch groups to combine\n"
-            f"Group 1 (failure-driven, HIGH priority): "
-            f"{len(f_edits)} edits\n"
-            f"Group 2 (success-driven, lower priority): "
-            f"{len(s_edits)} edits\n\n"
-            f"{combined_text}"
-        )
     optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
-    if optimizer_ctx:
-        user = f"{optimizer_ctx}\n\n{user}"
+    if not has_prompt("merge_final"):
+        raise FileNotFoundError("缺少模板 promptopt/prompts/merge_final.md")
+    user = fill_prompt("merge_final", {
+        "current_prompt": prompt_content,
+        "failure_edit_count": str(len(f_edits)),
+        "success_edit_count": str(len(s_edits)),
+        "combined_patches_json": combined_text,
+    })
+    if optimizer_ctx.strip():
+        user = f"{optimizer_ctx.strip()}\n\n{user}"
     try:
         response, _ = chat_optimizer(
-            system=merge_final_prompt,
+            system="",
             user=user,
-            max_completion_tokens=64000 if is_full_rewrite_minibatch_mode(update_mode) else 4096,
+            max_completion_tokens=4096,
             retries=3,
             stage="merge",
         )

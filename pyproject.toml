@@ -4,58 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptopt"
-version = "0.1.0"
-description = "prompt-opt: T2I prompt optimization via Reflect + Gate"
+version = "0.2.0"
+description = "prompt-opt: T2I prompt optimization via Reflect + Gate + aesthetic-core"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
     {name = "prompt-opt Team"},
 ]
-keywords = ["agent", "prompt-optimization", "prompt-learning", "LLM", "agentic"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
 dependencies = [
-    "openai>=1.30.0",
     "pyyaml>=6.0",
-    "numpy>=1.24.0",
-    "openpyxl>=3.1.0",
-    "azure-identity>=1.15.0",
-    "azure-core>=1.30.0",
     "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "byted-donyan-api-core>=0.1.23,<0.2.0",
 ]
 
 [project.optional-dependencies]
-# Claude model backend
-claude = ["claude-agent-sdk>=0.1.0"]
-# Qwen local model backend (via vLLM)
-qwen = ["vllm>=0.4.0"]
-# WebUI dashboard
-webui = ["gradio>=4.0.0"]
-# Development tools
 dev = ["ruff>=0.4.0", "pytest>=8.0.0"]
-# Optional model backends bundle
-all = [
-    "claude-agent-sdk>=0.1.0",
-]
 
 [project.scripts]
-promptopt-train = "scripts.train:main"
-promptopt-eval = "scripts.eval_only:main"
-
-[project.urls]
-Homepage = "https://github.com/microsoft/SkillOpt"
-Documentation = "https://microsoft.github.io/SkillOpt"
-Repository = "https://github.com/microsoft/SkillOpt"
-Issues = "https://github.com/microsoft/SkillOpt/issues"
+promptopt-run-t2i = "scripts.run_t2i:main"
 
 [tool.setuptools.packages.find]
 include = ["promptopt*", "scripts*"]

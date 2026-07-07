@@ -1,113 +1,82 @@
-# prompt-opt：T2I Prompt 优化（Direct）
+# prompt-opt：T2I Prompt 审美闭环优化
 
-Fork [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt)，**Reflect + Gate**，**固定 brief → 最优 T2I prompt**。
+设计要求 → Phase0 合成 prompt → Reflect + Gate（patch）→ 输出历史最高分 prompt。  
+依赖 **api-core**（LLM/生图）与 **aesthetic-core**（审美打分）。
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-**快照分支：** `backup/pre-t2i-direct`
-
----
-
-## 术语
-
-| 概念 | 键 / 产物 | 说明 |
-|------|-----------|------|
-| **prompt** | `prompt_init`、`prompts/prompt_vNNNN.md` | 优化对象，T2I 正文 |
-| **best prompt** | `best_prompt.md` | 验收通过的历史最优 |
-| **brief** | `data/.../*.json` | 固定业务约束，不改 |
-| **rubric** | 适配器打分 | 审美维度 → `hard`/`soft` |
-| **API 配置** | `.env`、`configs/` | 模型 endpoint，非 prompt 正文 |
-| **train_runs** | `env.train_runs` | Rollout 重复出图（无 seed） |
-| **gate_runs** | `env.gate_runs` | Gate 重复出图 |
-| **optimizer 模板** | `promptopt/llm_templates/` | Reflect 用 LLM 系统提示，`load_template()` |
-
-| YAML | 扁平 |
-|------|------|
-| `env.prompt_init` | `prompt_init` |
-| `optimizer.prompt_update_mode` | `prompt_update_mode` |
-| `optimizer.use_meta_prompt` | `use_meta_prompt` |
-| `env.best_prompt_file` | `best_prompt_file` |
-
----
-
-## 设计结论
-
-| 议题 | 结论 |
-|------|------|
-| 模式 | **direct**：优化 prompt 正文 |
-| meta | TODO |
-| 随机性 | 无 seed；`train_runs` / `gate_runs` |
-| 初始 prompt | 必填 `prompt_init` |
-| 收敛 | 无 loss；跑满 epoch；看 `best_score` |
-
----
-
-## Direct 流程
+## 流程
 
 ```mermaid
-flowchart TB
-    subgraph fixed ["固定"]
-        BRIEF["brief"]
-        API["API"]
-        RUBRIC["rubric"]
-    end
-    P0["initial.md"] --> R1["① Rollout"]
-    R1 --> R2["② Reflect"] --> R3["③④"] --> R4["⑤"]
-    R4 --> G1["⑥ Gate"] --> G2{"更高?"}
-    G2 -->|是| OK["更新 best"]
-    G2 -->|否| NO["保留"]
-    fixed -.-> R1
-    fixed -.-> G1
-    OK --> R1
-    NO --> R1
-    OK --> OUT["best_prompt.md"]
+flowchart LR
+    IN[KV case] --> P0[Phase0 合成]
+    P0 --> LOOP[1~8 轮 Reflect]
+    LOOP --> R[生图 rollout]
+    R --> A[审美打分]
+    A --> REF[Reflect patch]
+    REF --> G[Gate]
+    G --> META[Meta 记忆更新]
+    META --> LOOP
+    G --> OUT[best/]
 ```
-
-| 阶段 | 含义 |
-|------|------|
-| ① | prompt × `train_runs` → 均分 |
-| ② | 低分 → patches |
-| ③④ | 合并；`edit_budget` |
-| ⑤ | 候选 prompt |
-| ⑥ | × `gate_runs`；高于 current 才 accept |
-
----
 
 ## 目录
 
-| 路径 | 职责 |
-|------|------|
-| `promptopt/` | 核心包 |
-| `promptopt/envs/t2i/prompts/initial.md` | 初始 prompt |
-| `promptopt/llm_templates/` | Optimizer LLM 模板 |
-| `promptopt/engine/trainer.py` | 主循环 |
-| `configs/t2i/default.yaml` | 配方 |
-
+```text
+prompt-opt/
+├── data/user_cases.json       # KV 设计要求 case 库（本地，gitignore）
+├── scripts/run_t2i.py         # 唯一入口，顶部改配置
+├── promptopt/
+│   ├── prompts/               # 全阶段 LLM 模板（{占位符} 单文件）
+│   ├── templates.py           # 模板加载与填充
+│   ├── cases.py               # 随机选取 KV case
+│   ├── synthesize.py          # Phase0 合成
+│   ├── trajectory.py          # 审美结果 → 轨迹文本
+│   ├── runtime_config.py      # 默认参数
+│   ├── types.py               # Edit / Patch / RolloutResult
+│   ├── clients/               # api-core / aesthetic-core 桥接
+│   ├── engine/runner.py       # 主循环
+│   ├── gradient/              # reflect + merge
+│   ├── optimizer/             # rank + apply patch
+│   ├── evaluation/gate.py     # Gate 纯分数比较
+│   ├── model/                 # api_core LLM 后端
+│   └── utils/                 # JSON 解析、打分
+├── pyproject.toml
+└── outputs/                   # 运行产物（gitignore）
 ```
-outputs/<run>/
-├── best_prompt.md
-├── prompts/prompt_v0001.md
-└── steps/step_XXXX/
-```
-
----
 
 ## 运行
 
 ```bash
-pip install -e . && cp .env.example .env
-python scripts/train.py --config configs/t2i/default.yaml \
-  --split_dir data/t2i_split --out_root outputs/t2i_run
+pip install -e .
+pip install -e D:\kv-generator\engines\aesthetic-core
+
+python scripts/run_t2i.py
 ```
 
-| CLI | 说明 |
-|-----|------|
-| `--prompt_init` | 初始 prompt |
-| `--prompt_update_mode` | `patch` / `rewrite_from_suggestions` / … |
-| `--use_meta_prompt` | 跨 epoch 优化器记忆 |
+改 `scripts/run_t2i.py` 顶部：`MAX_ROUNDS`、`TRAIN_RUNS`、`GATE_RUNS`、`EDIT_BUDGET`、`USE_META_PROMPT`。
 
----
+## Meta Prompt（跨轮记忆）
 
-## 上游
+每轮 Gate 结束后，LLM 根据近期轮次摘要滚动更新 `meta_prompt_content`，下一轮 Reflect / Merge / Rank 通过 `## 优化器记忆` 注入，避免重复试错。
 
-[Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) · `backup/archive/`
+产物：`outputs/t2i_<ts>/meta_prompt.json`，每轮 `rounds/round_XXX/meta_prompt.json`。
+
+## 产物
+
+```text
+outputs/t2i_<timestamp>/
+├── case.json                  # 选用的 KV case
+├── design_requirement.txt
+├── config.json
+├── templates.json
+├── initial/                   # Phase0 prompt + image + score
+├── meta_prompt.json           # 最终跨轮记忆
+├── rounds/round_XXX/          # 每轮 input / rollout / patch / gate / meta_prompt.json
+├── best/                      # 历史最高分 prompt + image + score
+└── summary.json
+```
+
+## 踩坑
+
+- **Gate reject**：`current_score` 初始为 Phase0 预览图分，非 rollout 均分；候选需超过该基准才 accept。
+- **Windows 中文乱码**：patch JSON 须 `encoding="utf-8"` 写入（已修）。
+- **aesthetic-core**：须单独 `pip install -e` 到本地引擎路径。

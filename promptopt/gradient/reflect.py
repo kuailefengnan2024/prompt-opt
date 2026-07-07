@@ -1,21 +1,8 @@
-"""【功能描述】Reflect 核心 Reflect 引擎 — minibatch trajectory 分析；提供与环境无关的 minibatch trajectory 分析：将 trajectory 分组为大小 M 的 minibatch 一并分析，类比神经网络训练中的 minibatch SGD 与逐样本 SGD。
+"""【功能描述】Reflect 核心引擎 — minibatch trajectory 分析，产出局部 patch。
 
-【输入】results、prompt_content、prediction_dir、patches_dir、minibatch 与 edit 预算等配置。
+【输入】rollout 结果、当前 prompt、prediction_dir 等。
 
-【输出】fmt_trajectory 等格式化函数；run_minibatch_reflect 返回含 source_type 的 patch dict 列表。
-
-两级 prompt 优先级：
-
-1. **自定义 prompt**（adapter 返回非 None）— 原样使用。
-2. **通用默认 prompt**（adapter 返回 None）— 内置默认，无需配置即可适配任意环境。
-
-公共 API
---------
-- :func:`fmt_trajectory`               — 将单条 conversation 格式化为文本
-- :func:`fmt_minibatch_trajectories`   — 格式化多条 trajectory 供 batch 分析
-- :func:`run_error_analyst_minibatch`   — 对一组失败 trajectory 单次 optimizer 调用
-- :func:`run_success_analyst_minibatch` — 对一组成功 trajectory 单次 optimizer 调用
-- :func:`run_minibatch_reflect`         — 完整 reflect 阶段调度器
+【输出】run_minibatch_reflect 返回含 source_type 的 patch dict 列表。
 """
 from __future__ import annotations
 
@@ -29,14 +16,45 @@ from promptopt.model import chat_optimizer
 from promptopt.optimizer.meta_prompt import format_meta_prompt_context
 from promptopt.optimizer.update_modes import (
     get_payload_items,
-    is_full_rewrite_minibatch_mode,
     normalize_update_mode,
     payload_key,
     payload_label,
     truncate_payload,
 )
-from promptopt.llm_templates import load_template
+from promptopt.templates import fill_prompt, has_prompt
 from promptopt.utils import extract_json
+
+
+def _optional_section(title: str, body: str) -> str:
+    text = (body or "").strip()
+    if not text:
+        return ""
+    return f"## {title}\n{text}\n\n"
+
+
+def _build_flat_analyst_user(
+    template_name: str,
+    *,
+    prompt_content: str,
+    edit_budget: int,
+    update_mode: str,
+    trajectories_text: str,
+    trajectory_count: int,
+    step_buffer_context: str,
+    meta_prompt_context: str,
+) -> str:
+    mode = normalize_update_mode(update_mode)
+    ctx = (step_buffer_context or "").strip()
+    meta = format_meta_prompt_context(meta_prompt_context)
+    return fill_prompt(template_name, {
+        "current_prompt": prompt_content,
+        "edit_budget": str(edit_budget),
+        "payload_label": payload_label(mode),
+        "trajectory_count": str(trajectory_count),
+        "trajectories": trajectories_text,
+        "previous_steps_section": _optional_section("先前步骤摘要", ctx),
+        "meta_section": meta.strip(),
+    })
 
 
 # ── Trajectory 格式化 ────────────────────────────────────────────────────
@@ -132,10 +150,14 @@ def fmt_minibatch_trajectories(
     for idx, item in enumerate(items, 1):
         tid = str(item["id"])
         conv_path = os.path.join(prediction_dir, tid, "conversation.json")
-        if not os.path.exists(conv_path):
-            continue
-        with open(conv_path) as f:
-            conversation = json.load(f)
+        conversation = None
+        if os.path.exists(conv_path):
+            with open(conv_path, encoding="utf-8") as f:
+                conversation = json.load(f)
+        elif item.get("trajectory_text"):
+            conversation = [
+                {"type": "tool_call", "cmd": "rollout", "obs": str(item.get("trajectory_text"))},
+            ]
         if not conversation:
             continue
 
@@ -222,27 +244,6 @@ def fmt_minibatch_trajectories(
 # ── Prompt 解析 ───────────────────────────────────────────────────────
 
 
-def _resolve_prompt(custom: str | None, default_name: str, update_mode: str = "patch") -> str:
-    """若提供了 *custom*（非 None）则返回，否则从文件加载。"""
-    if custom is not None:
-        return custom
-    mode = normalize_update_mode(update_mode)
-    actual_name = default_name
-    if is_full_rewrite_minibatch_mode(mode):
-        full_name = f"{default_name}_full_rewrite"
-        try:
-            return load_template(full_name)
-        except FileNotFoundError:
-            actual_name = default_name
-    elif mode == "rewrite_from_suggestions":
-        rewrite_name = f"{default_name}_rewrite"
-        try:
-            return load_template(rewrite_name)
-        except FileNotFoundError:
-            actual_name = default_name
-    return load_template(actual_name)
-
-
 # ── Minibatch analyst ──────────────────────────────────────────────────────
 
 
@@ -286,49 +287,41 @@ def run_error_analyst_minibatch(
         含 ``source_type="failure"`` 的 patch dict，出错时 ``None``。
     """
     mode = normalize_update_mode(update_mode)
-    actual_system = _resolve_prompt(system_prompt, "analyst_error", mode)
-
     trajectories_text = fmt_minibatch_trajectories(items, prediction_dir)
     if not trajectories_text.strip():
         return None
 
-    user = (
-        f"## Current Prompt\n{prompt_content}\n\n"
-    )
-    if is_full_rewrite_minibatch_mode(mode):
-        user += (
-            f"## Update Format\n"
-            f"Produce one complete replacement prompt candidate for this minibatch. "
-            f"Do not output edits, patches, or revise suggestions.\n\n"
-        )
-    else:
-        user += (
-            f"## {payload_label(mode, title=True)} Budget\n"
-            f"Produce at most L={edit_budget} {payload_label(mode)}.\n\n"
-        )
-    # 统一的 step buffer 上下文（首选）
     ctx = step_buffer_context or rejection_context or ""
     if trajectory_memory_context:
         ctx = f"{ctx}\n{trajectory_memory_context}" if ctx else trajectory_memory_context
-    if ctx.strip():
-        user += f"## Previous Steps in This Epoch\n{ctx}\n\n"
-    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
-    if optimizer_ctx:
-        user += optimizer_ctx + "\n\n"
-    user += f"## Failed Trajectories ({len(items)} total)\n{trajectories_text}"
+
+    if system_prompt is not None:
+        raise ValueError("T2I 引擎使用 promptopt/prompts/ 模板，不支持自定义 system_prompt")
+    if not has_prompt("reflect_analyst_error"):
+        raise FileNotFoundError("缺少模板 promptopt/prompts/reflect_analyst_error.md")
+
+    user = _build_flat_analyst_user(
+        "reflect_analyst_error",
+        prompt_content=prompt_content,
+        edit_budget=edit_budget,
+        update_mode=mode,
+        trajectories_text=trajectories_text,
+        trajectory_count=len(items),
+        step_buffer_context=ctx,
+        meta_prompt_context=meta_prompt_context,
+    )
 
     try:
         response, _ = chat_optimizer(
-            system=actual_system, user=user,
-            max_completion_tokens=64000 if is_full_rewrite_minibatch_mode(mode) else 4096,
+            system="", user=user,
+            max_completion_tokens=4096,
             retries=3,
             stage="analyst",
         )
         result = extract_json(response)
         if result and "patch" in result:
             result["source_type"] = "failure"
-            if not is_full_rewrite_minibatch_mode(mode):
-                truncate_payload(result["patch"], edit_budget, mode)
+            truncate_payload(result["patch"], edit_budget, mode)
             return result
     except Exception:  # noqa: BLE001
         traceback.print_exc()
@@ -364,46 +357,39 @@ def run_success_analyst_minibatch(
         含 ``source_type="success"`` 的 patch dict，出错时 ``None``。
     """
     mode = normalize_update_mode(update_mode)
-    actual_system = _resolve_prompt(system_prompt, "analyst_success", mode)
-
     trajectories_text = fmt_minibatch_trajectories(items, prediction_dir)
     if not trajectories_text.strip():
         return None
 
-    user = (
-        f"## Current Prompt\n{prompt_content}\n\n"
-    )
-    if is_full_rewrite_minibatch_mode(mode):
-        user += (
-            f"## Update Format\n"
-            f"Produce one complete replacement prompt candidate for this minibatch. "
-            f"Do not output edits, patches, or revise suggestions.\n\n"
-        )
-    else:
-        user += (
-            f"## {payload_label(mode, title=True)} Budget\n"
-            f"Produce at most L={edit_budget} {payload_label(mode)}.\n\n"
-        )
     ctx = step_buffer_context or trajectory_memory_context or ""
-    if ctx.strip():
-        user += f"## Previous Steps in This Epoch\n{ctx}\n\n"
-    optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
-    if optimizer_ctx:
-        user += optimizer_ctx + "\n\n"
-    user += f"## Successful Trajectories ({len(items)} total)\n{trajectories_text}"
+
+    if system_prompt is not None:
+        raise ValueError("T2I 引擎使用 promptopt/prompts/ 模板，不支持自定义 system_prompt")
+    if not has_prompt("reflect_analyst_success"):
+        raise FileNotFoundError("缺少模板 promptopt/prompts/reflect_analyst_success.md")
+
+    user = _build_flat_analyst_user(
+        "reflect_analyst_success",
+        prompt_content=prompt_content,
+        edit_budget=edit_budget,
+        update_mode=mode,
+        trajectories_text=trajectories_text,
+        trajectory_count=len(items),
+        step_buffer_context=ctx,
+        meta_prompt_context=meta_prompt_context,
+    )
 
     try:
         response, _ = chat_optimizer(
-            system=actual_system, user=user,
-            max_completion_tokens=64000 if is_full_rewrite_minibatch_mode(mode) else 4096,
+            system="", user=user,
+            max_completion_tokens=4096,
             retries=3,
             stage="analyst",
         )
         result = extract_json(response)
         if result and "patch" in result:
             result["source_type"] = "success"
-            if not is_full_rewrite_minibatch_mode(mode):
-                truncate_payload(result["patch"], edit_budget, mode)
+            truncate_payload(result["patch"], edit_budget, mode)
             return result
     except Exception:  # noqa: BLE001
         traceback.print_exc()
@@ -512,7 +498,7 @@ def run_minibatch_reflect(
     for idx, batch in enumerate(fail_batches):
         path = os.path.join(patches_dir, f"minibatch_fail_{idx:03d}.json")
         if os.path.exists(path):
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 raw_patches.append(json.load(f))
         else:
             pending_fail.append((idx, batch))
@@ -521,7 +507,7 @@ def run_minibatch_reflect(
     for idx, batch in enumerate(succ_batches):
         path = os.path.join(patches_dir, f"minibatch_succ_{idx:03d}.json")
         if os.path.exists(path):
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 raw_patches.append(json.load(f))
         else:
             pending_succ.append((idx, batch))
@@ -572,7 +558,7 @@ def run_minibatch_reflect(
             tag, patch = fut.result()
             if patch:
                 path = os.path.join(patches_dir, f"{tag}.json")
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     json.dump(patch, f, ensure_ascii=False, indent=2)
                 raw_patches.append(patch)
             n_edits = len(get_payload_items(patch.get("patch", {}) if patch else {}, update_mode))

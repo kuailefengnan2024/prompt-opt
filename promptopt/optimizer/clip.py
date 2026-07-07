@@ -11,12 +11,11 @@ from promptopt.optimizer.meta_prompt import format_meta_prompt_context
 from promptopt.optimizer.update_modes import (
     describe_item,
     get_payload_items,
-    is_rewrite_mode,
     normalize_update_mode,
     payload_key,
     payload_label,
 )
-from promptopt.llm_templates import load_template
+from promptopt.templates import fill_prompt, has_prompt
 from promptopt.utils import extract_json
 
 
@@ -56,22 +55,24 @@ def rank_and_select(
     edits_desc = []
     for i, edit in enumerate(edits):
         edits_desc.append(f"[{i}] {describe_item(edit, update_mode, max_chars=500)}")
+    edits_pool = "\n".join(edits_desc)
 
-    user = (
-        f"## Current Prompt\n{prompt_content}\n\n"
-        f"## {payload_label(update_mode, title=True)} Pool ({len(edits)} {payload_label(update_mode)}, budget={max_edits})\n"
-        + "\n".join(edits_desc)
-        + f"\n\nSelect the {max_edits} most important {payload_label(update_mode)}. "
-        f"Return their 0-based indices in priority order."
-    )
     optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
-    if optimizer_ctx:
-        user = f"{optimizer_ctx}\n\n{user}"
-    prompt_name = "ranking_rewrite" if is_rewrite_mode(update_mode) else "ranking"
+    if not has_prompt("ranking"):
+        raise FileNotFoundError("缺少模板 promptopt/prompts/ranking.md")
+    user = fill_prompt("ranking", {
+        "current_prompt": prompt_content,
+        "payload_label": payload_label(update_mode),
+        "edit_count": str(len(edits)),
+        "edit_budget": str(max_edits),
+        "edits_pool": edits_pool,
+    })
+    if optimizer_ctx.strip():
+        user = f"{optimizer_ctx.strip()}\n\n{user}"
 
     try:
         response, _ = chat_optimizer(
-            system=load_template(prompt_name), user=user,
+            system="", user=user,
             max_completion_tokens=2048, retries=3, stage="ranking",
         )
         result = extract_json(response)

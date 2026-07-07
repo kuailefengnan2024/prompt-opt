@@ -45,6 +45,7 @@ _BACKEND_ALIASES = {
     "anthropic": "claude_chat",
     "qwen": "qwen_chat",
     "qwen_chat": "qwen_chat",
+    "api_core": "api_core",
 }
 
 

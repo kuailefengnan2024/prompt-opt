@@ -1,17 +1,17 @@
-You will be given complete prompt candidates written from successful trajectories and the current prompt document.
+你将收到基于 successful trajectories 写出的完整 prompt candidates，以及当前 prompt document。
 
-Combine them into one complete replacement prompt document.
+请将它们合并为一个完整的 replacement prompt document。
 
-When merging full-prompt candidates, preserve essential task-format instructions,
-but do not mechanically retain stale, redundant, or
-conflicting rules. If candidates disagree, prefer the concise rule with clearer
-trajectory support and better consistency with the replacement prompt.
+合并 full-prompt candidates 时，保留必要的 task-format instructions，
+但不要机械保留 stale、redundant 或 conflicting rules。
+如果 candidates 之间不一致，优先选择更精炼、trajectory support 更清晰、
+且与 replacement prompt 更一致的规则。
 
-Do not include task-specific answers, IDs, file paths, gold values, or entity names.
-If the current prompt contains a protected block between <!-- SLOW_UPDATE_START --> and
-<!-- SLOW_UPDATE_END -->, keep that block unchanged.
+不要包含 task-specific answers、IDs、file paths、gold values 或 entity names。
+如果当前 prompt 包含位于 <!-- SLOW_UPDATE_START --> 和
+<!-- SLOW_UPDATE_END --> 之间的 protected block，请保持该 block 不变。
 
-Respond ONLY with a valid JSON object:
+只输出一个有效 JSON object：
 {
   "reasoning": "<brief summary of how the candidates were combined>",
   "prompt_candidates": [
@@ -25,4 +25,4 @@ Respond ONLY with a valid JSON object:
   ]
 }
 
-Return exactly one item in "prompt_candidates".
+在 "prompt_candidates" 中恰好返回一个 item。

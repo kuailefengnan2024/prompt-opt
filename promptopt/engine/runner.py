@@ -23,6 +23,7 @@ from promptopt.model.api_core_backend import configure_api_core_llm, get_token_s
 from promptopt.model.backend_config import set_optimizer_backend
 from promptopt.optimizer.clip import rank_and_select
 from promptopt.optimizer.meta_prompt import build_history_digest, run_meta_prompt_update
+from promptopt.optimizer.prompt_editor import apply_patch_with_report
 from promptopt.utils import compute_score
 
 
@@ -531,6 +532,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             update_mode="patch",
             meta_prompt_context=meta_prompt_content,
         )
+        failure_patches = []
         success_patches = []
         for p in raw_patches:
             if not isinstance(p, dict):

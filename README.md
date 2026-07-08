@@ -52,7 +52,9 @@ pip install -e D:\kv-generator\engines\aesthetic-core
 python scripts/run_t2i.py
 ```
 
-改 `scripts/run_t2i.py` 顶部：`MAX_ROUNDS`、`TRAIN_RUNS`、`GATE_RUNS`、`EDIT_BUDGET`、`USE_META_PROMPT`。
+改 `scripts/run_t2i.py` 顶部：`MAX_ROUNDS`、`OPEN_REPORT` 等。
+
+训练结束自动生成 `report.html`；`OPEN_REPORT=True`（默认）会用系统浏览器打开。
 
 ## Meta Prompt（跨轮记忆）
 
@@ -70,6 +72,7 @@ outputs/t2i_<timestamp>/
 ├── templates.json
 ├── initial/                   # Phase0 prompt + image + score
 ├── meta_prompt.json           # 最终跨轮记忆
+├── report.html                # 训练可视化报告（自动生成）
 ├── rounds/round_XXX/          # 每轮 input / rollout / patch / gate / meta_prompt.json
 ├── best/                      # 历史最高分 prompt + image + score
 └── summary.json

@@ -80,8 +80,9 @@ SAVE_DEBUG = False
 USE_META_PROMPT = True
 META_PROMPT_MAX_CHARS = 1500
 
-# =============================================================================
-# 低频（一般不用动）
+# 训练结束后用默认浏览器打开 report.html
+OPEN_REPORT = True
+
 # =============================================================================
 
 _AESTHETIC_ROOT = Path(r"D:\kv-generator\engines\aesthetic-core")
@@ -156,8 +157,15 @@ def main() -> None:
     print(f"  best_score: {best.get('score')}")
     print(f"  best_step:  {best.get('step')}")
     print(f"  产物:       {out_root}")
-    print("  交付物:     initial/  best/  summary.json")
+    print(f"  报告:       {summary.get('report', out_root + '/report.html')}")
+    print("  交付物:     initial/  best/  summary.json  report.html")
     print("=" * 60)
+
+    report_path = summary.get("report") or str(Path(out_root) / "report.html")
+    if OPEN_REPORT and Path(report_path).is_file():
+        import webbrowser
+        webbrowser.open(Path(report_path).resolve().as_uri())
+        print(f"  已打开报告: {report_path}")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from promptopt.model.backend_config import set_optimizer_backend
 from promptopt.optimizer.clip import rank_and_select
 from promptopt.optimizer.meta_prompt import build_history_digest, run_meta_prompt_update
 from promptopt.optimizer.prompt_editor import apply_patch_with_report
+from promptopt.report import generate_run_report
 from promptopt.utils import compute_score
 
 
@@ -435,6 +436,7 @@ def _write_deliverables(
             "final_content": meta_prompt_content or None,
             "chars": len(meta_prompt_content) if meta_prompt_content else 0,
         },
+        "report": "report.html",
         "token_summary": get_token_summary(),
     }
     with open(root / "summary.json", "w", encoding="utf-8") as f:
@@ -683,5 +685,10 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
 
     if not cfg.save_debug:
         shutil.rmtree(work_root, ignore_errors=True)
+
+    report_path = generate_run_report(out_root)
+    summary["report"] = report_path
+    with open(os.path.join(out_root, "summary.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
 
     return summary

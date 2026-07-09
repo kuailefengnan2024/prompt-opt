@@ -19,69 +19,49 @@ if str(_PROJECT_ROOT) not in sys.path:
 # ★ 高频配置（改这里）
 # =============================================================================
 
-# True：从 data/user_cases.json 随机选一条 KV 设计要求；False：用下方 DESIGN_REQUIREMENT
-USE_RANDOM_KV_CASE = True
-
-# 仅当 USE_RANDOM_KV_CASE=False 时生效
-DESIGN_REQUIREMENT = (
+# ── Case / 输入 ──────────────────────────────────────────────────────────────
+USE_RANDOM_KV_CASE = True  # True：从 data/user_cases.json 随机选；False：用下方 DESIGN_REQUIREMENT
+CASE_SEED = None           # None=每次随机；设整数可复现同一 case
+CATEGORY = "3d"            # 品类：3d | graphic | illustration
+DESIGN_REQUIREMENT = (     # 仅当 USE_RANDOM_KV_CASE=False 时生效
     "主标题：夏日音乐节\n"
     "副标题：2026 · 北京站\n"
     "其他要求：蓝紫霓虹、横版 16:9、画面简洁、主标题区留白干净。"
 )
 
-# 品类：3d | graphic | illustration
-CATEGORY = "3d"
+# ── 训练循环 ────────────────────────────────────────────────────────────────
+MAX_ROUNDS = 8    # 正式跑满 N 轮，取 history 中 best_score 最高 prompt
+TRAIN_RUNS = 4    # 每轮 Reflect 前 rollout 张数（多次采样取均分）
+GATE_RUNS = 2     # Gate 验证张数（多次采样取均分）
+EDIT_BUDGET = 4   # 每步最多几条局部 patch（学习率）
+SEED = 42         # Reflect minibatch shuffle 等可复现种子
 
-# 正式跑满 8 轮，取 history 中 best_score 最高 prompt
-MAX_ROUNDS = 8
-
-# 每轮 rollout / gate 各出几张图（无 seed，多次采样取均分）
-TRAIN_RUNS = 2
-GATE_RUNS = 2
-
-# 每步最多几条局部 patch（学习率）
-EDIT_BUDGET = 3
-
-# 审美及格线：final_score >= 此值 → hard=1
-HARD_THRESHOLD = 65.0
-
-# ensemble 整体置信度过低则标注 unreliable（仍参与打分）
-MIN_ENSEMBLE_CONFIDENCE = 0.5
-
-# 子维度 reason 已由 aesthetic-core 按 0.833 过滤；此处供 trajectory 展示
-REASON_MIN_DIM_CONFIDENCE = 0.833
-
-# api-core 注册名
-LLM_PROVIDER = "doubao21pro"
-IMAGE_PROVIDER = "seedream_4_5"
-IMAGE_SIZE = "2999x1687"
-
-# 审美单系（仅 doubao）
-AESTHETIC_ENSEMBLE = {
+# ── 审美打分 ────────────────────────────────────────────────────────────────
+HARD_THRESHOLD = 65.0              # final_score >= 此值 → hard=1
+MIN_ENSEMBLE_CONFIDENCE = 0.5      # ensemble 置信度过低则标注 unreliable（仍参与打分）
+REASON_MIN_DIM_CONFIDENCE = 0.833  # 子维度 reason 过滤阈值，供 trajectory 展示
+AESTHETIC_ENSEMBLE = {             # 审美单系（仅 doubao）
     "doubao": "doubao_seed_2_0_pro_vision",
 }
 
-# Reflect 并行
+# ── 模型 Provider ───────────────────────────────────────────────────────────
+LLM_PROVIDER = "doubao21pro"       # api-core 注册名
+IMAGE_PROVIDER = "seedream_4_5"
+IMAGE_SIZE = "2999x1687"
+
+# ── Reflect 并行 ────────────────────────────────────────────────────────────
 MINIBATCH_SIZE = 8
 ANALYST_WORKERS = 4
 MERGE_BATCH_SIZE = 4
-SEED = 42
 
-# None=每次随机选 case；设整数可复现同一 case
-CASE_SEED = None
-
-# 产物根目录（每次运行子目录 outputs/<timestamp>/）
-OUTPUT_ROOT = "outputs"
-
-# 中间产物默认不落盘；排错时可改 True 保留 rounds/ 下 patch 等细节
-SAVE_DEBUG = False
-
-# 跨轮优化器记忆：每轮 Gate 后 LLM 滚动更新，下轮 Reflect 注入
-USE_META_PROMPT = True
+# ── Meta 记忆 ───────────────────────────────────────────────────────────────
+USE_META_PROMPT = True          # 每轮 Gate 后滚动更新，下轮 Reflect 注入
 META_PROMPT_MAX_CHARS = 1500
 
-# 训练结束后用默认浏览器打开 report.html
-OPEN_REPORT = True
+# ── 产物 / 调试 ─────────────────────────────────────────────────────────────
+OUTPUT_ROOT = "outputs"  # 每次运行子目录 outputs/<timestamp>/
+SAVE_DEBUG = False       # True：保留 _work 中间产物
+OPEN_REPORT = True       # 结束后用默认浏览器打开 report.html
 
 # =============================================================================
 

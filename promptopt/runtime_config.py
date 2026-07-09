@@ -6,12 +6,7 @@ from __future__ import annotations
 
 # ── 任务输入 ──────────────────────────────────────────────────────────────
 DEFAULT_CATEGORY: str = "3d"
-DEFAULT_DESIGN_REQUIREMENT: str = (
-    "主题：赛博朋克夏日音乐节 KV 海报。\n"
-    "主标题：夏日音乐节\n"
-    "副标题：2026 · 北京站\n"
-    "要求：蓝紫霓虹、横版 16:9、画面简洁、主标题区留白干净。"
-)
+DEFAULT_PROMPT_LIBRARY: str = "data/kv_synth_prompts_100_only.json"
 
 # ── 优化循环 ──────────────────────────────────────────────────────────────
 DEFAULT_MAX_ROUNDS: int = 8

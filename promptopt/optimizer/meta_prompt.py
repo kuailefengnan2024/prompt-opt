@@ -117,7 +117,7 @@ def build_history_digest(history: list[dict[str, Any]], max_rounds: int = 4) -> 
 
 def run_meta_prompt_update(
     *,
-    design_requirement: str,
+    prompt_excerpt: str,
     previous_meta: str,
     round_digest: str,
     max_chars: int = DEFAULT_META_MAX_CHARS,
@@ -127,7 +127,7 @@ def run_meta_prompt_update(
         raise FileNotFoundError("缺少模板 promptopt/prompts/meta_prompt.md")
 
     user = fill_prompt("meta_prompt", {
-        "design_requirement": _clip(design_requirement, 800),
+        "prompt_excerpt": _clip(prompt_excerpt, 800),
         "previous_meta": previous_meta.strip() or "（空）",
         "round_digest": round_digest.strip() or "（无新轮次信息）",
         "max_chars": str(max_chars),

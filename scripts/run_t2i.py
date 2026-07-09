@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# 【功能描述】T2I prompt 优化入口：随机 KV case → Phase0 合成 → 8 轮 Reflect → outputs/
-# 【输入】本文件顶部 ★ 高频配置
+# 【功能描述】T2I prompt 优化入口：随机库内 prompt → Reflect（仅改画面构图）→ outputs/
+# 【输入】本文件顶部 ★ 高频配置；data/kv_synth_prompts_100_only.json
 # 【输出】outputs/<run_id>/ 下 case.json、initial/、rounds/、best/、summary.json
 
 from __future__ import annotations
@@ -20,14 +20,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 # =============================================================================
 
 # ── Case / 输入 ──────────────────────────────────────────────────────────────
-USE_RANDOM_KV_CASE = True  # True：从 data/user_cases.json 随机选；False：用下方 DESIGN_REQUIREMENT
-CASE_SEED = None           # None=每次随机；设整数可复现同一 case
-CATEGORY = "3d"            # 品类：3d | graphic | illustration
-DESIGN_REQUIREMENT = (     # 仅当 USE_RANDOM_KV_CASE=False 时生效
-    "主标题：夏日音乐节\n"
-    "副标题：2026 · 北京站\n"
-    "其他要求：蓝紫霓虹、横版 16:9、画面简洁、主标题区留白干净。"
-)
+CASE_SEED = None  # None=每次随机；设整数可复现同一条库内 prompt
+CATEGORY = "3d"   # 品类：3d | graphic | illustration
+PROMPT_LIBRARY = "data/kv_synth_prompts_100_only.json"  # 字符串数组，入参只用 prompt
 
 # ── 训练循环 ────────────────────────────────────────────────────────────────
 MAX_ROUNDS = 8    # 正式跑满 N 轮，取 history 中 best_score 最高 prompt
@@ -89,21 +84,20 @@ def _load_dotenv() -> None:
 def main() -> None:
     _load_dotenv()
     from promptopt.engine.runner import T2IRunConfig, run_t2i_optimize
-    from promptopt.cases import pick_random_kv_case
+    from promptopt.cases import pick_random_synth_prompt
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_root = str(_PROJECT_ROOT / OUTPUT_ROOT / f"t2i_{run_id}")
     os.makedirs(out_root, exist_ok=True)
 
-    kv_case = None
-    design_requirement = DESIGN_REQUIREMENT
-    if USE_RANDOM_KV_CASE:
-        kv_case = pick_random_kv_case(seed=CASE_SEED)
-        design_requirement = kv_case["design_requirement"]
-        print(f"随机 KV case: {kv_case.get('case_id')} — {kv_case.get('main_title')}")
+    case = pick_random_synth_prompt(
+        seed=CASE_SEED,
+        path=_PROJECT_ROOT / PROMPT_LIBRARY,
+    )
+    print(f"随机库内 prompt: index={case['index']} chars={len(case['prompt'])}")
 
     cfg = T2IRunConfig(
-        design_requirement=design_requirement,
+        initial_prompt=case["prompt"],
         category=CATEGORY,
         max_rounds=MAX_ROUNDS,
         train_runs=TRAIN_RUNS,
@@ -121,7 +115,7 @@ def main() -> None:
         merge_batch_size=MERGE_BATCH_SIZE,
         seed=SEED,
         out_root=out_root,
-        kv_case=kv_case,
+        case_meta=case,
         save_debug=SAVE_DEBUG,
         use_meta_prompt=USE_META_PROMPT,
         meta_prompt_max_chars=META_PROMPT_MAX_CHARS,
@@ -133,7 +127,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("完成")
     best = summary.get("best") or {}
-    print(f"  case:       {summary.get('case_id')} {summary.get('main_title')}")
+    print(f"  case_index: {summary.get('case_index')}")
     print(f"  best_score: {best.get('score')}")
     print(f"  best_step:  {best.get('step')}")
     print(f"  产物:       {out_root}")

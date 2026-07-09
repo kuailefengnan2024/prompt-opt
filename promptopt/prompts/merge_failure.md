@@ -2,12 +2,13 @@
 
 # 合并准则
 
-1. **Deduplicate**：相似 edits 只保留措辞最佳版本。
-2. **Resolve conflicts**：矛盾时选 justification 更强的一方。
-3. **Preserve unique insights**：纳入所有 non-redundant corrective edits。
-4. **Prevalent-pattern bias**：多 patch 重复出现的 edits 高优先级保留。
-5. **Independence**：任意两条 edits 不得 target 同一 text region。
-6. **Support count**：估计每条 merged edit 有多少 source patches 支持。
+1. **构图限定**：只保留作用于【画面构图】的 edits；丢弃任何会改动【核心特征】或【画面风格】的 edits。
+2. **Deduplicate**：相似 edits 只保留措辞最佳版本。
+3. **Resolve conflicts**：矛盾时选 justification 更强的一方。
+4. **Preserve unique insights**：纳入所有 non-redundant corrective edits。
+5. **Prevalent-pattern bias**：多 patch 重复出现的 edits 高优先级保留。
+6. **Independence**：任意两条 edits 不得 target 同一 text region。
+7. **Support count**：估计每条 merged edit 有多少 source patches 支持。
 
 ---
 

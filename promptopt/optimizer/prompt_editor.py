@@ -1,4 +1,4 @@
-"""【功能描述】Reflect prompt 操作 — 编辑应用与 patch 处理，Reflect 流水线 Update 阶段（⑤）：将排序后的编辑集应用到当前 prompt 文档，生成更新候选，类比神经网络训练中的 optimizer.step()。
+"""【功能描述】Reflect prompt 操作 — 编辑应用与 patch 处理；Update 阶段将排序后的编辑集应用到当前 prompt，类比 optimizer.step()。硬保护【核心特征】与【画面风格】，仅允许改动【画面构图】。
 
 【输入】prompt 文档字符串、Edit/Patch 实例或 dict。
 
@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,6 +14,10 @@ if TYPE_CHECKING:
 
 SLOW_UPDATE_START = "<!-- SLOW_UPDATE_START -->"
 SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
+
+_LOCKED_TITLES = ("【核心特征】", "【画面风格】")
+_COMPOSITION_TITLE = "【画面构图】"
+_SECTION_START_RE = re.compile(r"【[^】]+】")
 
 
 def _is_in_slow_update_region(prompt: str, target: str) -> bool:
@@ -34,6 +39,59 @@ def _strip_slow_update_markers(text: str) -> str:
         text.replace(SLOW_UPDATE_START, "")
             .replace(SLOW_UPDATE_END, "")
     )
+
+
+def _section_span(prompt: str, title: str) -> tuple[int, int] | None:
+    """返回某段标题起至下一【…】标题前（或文末）的 [start, end)。"""
+    start = prompt.find(title)
+    if start == -1:
+        return None
+    after = start + len(title)
+    nxt = _SECTION_START_RE.search(prompt, after)
+    end = nxt.start() if nxt else len(prompt)
+    return start, end
+
+
+def _extract_section(prompt: str, title: str) -> str | None:
+    span = _section_span(prompt, title)
+    if span is None:
+        return None
+    return prompt[span[0]:span[1]]
+
+
+def _locked_sections_snapshot(prompt: str) -> dict[str, str]:
+    snap: dict[str, str] = {}
+    for title in _LOCKED_TITLES:
+        body = _extract_section(prompt, title)
+        if body is not None:
+            snap[title] = body
+    return snap
+
+
+def _locked_sections_intact(before: str, after: str) -> bool:
+    """若原文含锁定段，则要求这些段在 after 中完全一致。"""
+    for title, body in _locked_sections_snapshot(before).items():
+        if _extract_section(after, title) != body:
+            return False
+    return True
+
+
+def _target_touches_locked(prompt: str, target: str) -> bool:
+    """target 落在【核心特征】或【画面风格】内则 True。"""
+    if not target:
+        return False
+    idx = prompt.find(target)
+    if idx == -1:
+        return False
+    for title in _LOCKED_TITLES:
+        span = _section_span(prompt, title)
+        if span and span[0] <= idx < span[1]:
+            return True
+    return False
+
+
+def _has_composition_section(prompt: str) -> bool:
+    return _COMPOSITION_TITLE in prompt
 
 
 def _edit_fields(edit: EditType | dict) -> tuple[str, str, str]:
@@ -58,18 +116,44 @@ def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, di
         report["status"] = "skipped_protected_slow_update_region"
         return prompt, report
 
+    if target and _target_touches_locked(prompt, target):
+        report["status"] = "skipped_locked_section"
+        return prompt, report
+
+    # 有三段结构时禁止整篇 append（会落到风格段后）；改为插入构图段末尾
+    if op == "append" and _has_composition_section(prompt):
+        span = _section_span(prompt, _COMPOSITION_TITLE)
+        if span is None:
+            report["status"] = "skipped_append_no_composition"
+            return prompt, report
+        _, end = span
+        insert_at = end
+        # 尽量插在构图段末尾空白之前
+        body = prompt[span[0]:end].rstrip()
+        insert_at = span[0] + len(body)
+        candidate = prompt[:insert_at] + "\n\n" + content + "\n" + prompt[insert_at:]
+        if not _locked_sections_intact(prompt, candidate):
+            report["status"] = "skipped_would_mutate_locked_section"
+            return prompt, report
+        report["status"] = "applied_append_in_composition"
+        return candidate, report
+
     if op == "append":
         su_start = prompt.find(SLOW_UPDATE_START)
         if su_start != -1:
             before = prompt[:su_start].rstrip()
             after = prompt[su_start:]
+            candidate = before + "\n\n" + content + "\n\n" + after
             report["status"] = "applied_append_before_slow_update"
-            return before + "\n\n" + content + "\n\n" + after, report
+            return candidate, report
         report["status"] = "applied_append"
         return prompt.rstrip() + "\n\n" + content + "\n", report
 
     if op == "insert_after":
         if not target or target not in prompt:
+            if _has_composition_section(prompt):
+                report["status"] = "skipped_insert_after_target_not_found"
+                return prompt, report
             su_start = prompt.find(SLOW_UPDATE_START)
             if su_start != -1:
                 before = prompt[:su_start].rstrip()
@@ -78,11 +162,18 @@ def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, di
                 return before + "\n\n" + content + "\n\n" + after, report
             report["status"] = "applied_insert_after_fallback_append"
             return prompt.rstrip() + "\n\n" + content + "\n", report
+        if _target_touches_locked(prompt, target) and target != _COMPOSITION_TITLE:
+            report["status"] = "skipped_locked_section"
+            return prompt, report
         idx = prompt.index(target) + len(target)
         newline = prompt.find("\n", idx)
         insert_at = newline + 1 if newline != -1 else len(prompt)
+        candidate = prompt[:insert_at] + "\n" + content + "\n" + prompt[insert_at:]
+        if not _locked_sections_intact(prompt, candidate):
+            report["status"] = "skipped_would_mutate_locked_section"
+            return prompt, report
         report["status"] = "applied_insert_after"
-        return prompt[:insert_at] + "\n" + content + "\n" + prompt[insert_at:], report
+        return candidate, report
 
     if op == "replace":
         if not target:
@@ -91,8 +182,15 @@ def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, di
         if target not in prompt:
             report["status"] = "skipped_replace_target_not_found"
             return prompt, report
+        if _target_touches_locked(prompt, target):
+            report["status"] = "skipped_locked_section"
+            return prompt, report
+        candidate = prompt.replace(target, content, 1)
+        if not _locked_sections_intact(prompt, candidate):
+            report["status"] = "skipped_would_mutate_locked_section"
+            return prompt, report
         report["status"] = "applied_replace"
-        return prompt.replace(target, content, 1), report
+        return candidate, report
 
     if op == "delete":
         if not target:
@@ -101,8 +199,15 @@ def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, di
         if target not in prompt:
             report["status"] = "skipped_delete_target_not_found"
             return prompt, report
+        if _target_touches_locked(prompt, target):
+            report["status"] = "skipped_locked_section"
+            return prompt, report
+        candidate = prompt.replace(target, "", 1)
+        if not _locked_sections_intact(prompt, candidate):
+            report["status"] = "skipped_would_mutate_locked_section"
+            return prompt, report
         report["status"] = "applied_delete"
-        return prompt.replace(target, "", 1), report
+        return candidate, report
 
     report["status"] = "skipped_unknown_op"
     return prompt, report
@@ -118,7 +223,7 @@ def apply_edit(prompt: str, edit: EditType | dict) -> str:
     edit : Edit | dict
         :class:`~promptopt.types.Edit` 实例或含 ``op``、``content``、``target`` 键的普通 dict。
 
-    针对受保护 slow-update 区域的编辑会被静默跳过。
+    针对受保护 slow-update 区域及锁定段的编辑会被静默跳过。
     """
     updated_prompt, _ = _apply_edit_with_report(prompt, edit)
     return updated_prompt

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# 【功能描述】批量 T2I 优化：按预设 CASE_SEEDS 依次跑满链路并生成 report
-# 【输入】本文件顶部 ★ 配置（10 个 case seed）
+# 【功能描述】批量 T2I 优化：按预设 CASE_SEEDS 依次从库内取 prompt 跑满链路
+# 【输入】本文件顶部 ★ 配置；data/kv_synth_prompts_100_only.json
 # 【输出】outputs/t2i_<ts>/ × N；outputs/batch_<ts>/manifest.json
 
 from __future__ import annotations
@@ -22,8 +22,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 # ★ 批量配置（改这里）
 # =============================================================================
 
-# 10 个 case 的随机种子（与 case_10、case_22 不重复）
+# 10 个 case 的随机种子（对应库内不同 prompt）
 CASE_SEEDS = [0, 2, 3, 5, 6, 7, 8, 9, 10, 11]
+PROMPT_LIBRARY = "data/kv_synth_prompts_100_only.json"
 
 CATEGORY = "3d"
 MAX_ROUNDS = 8
@@ -76,11 +77,12 @@ def _load_dotenv() -> None:
 def main() -> None:
     _load_dotenv()
     from promptopt.engine.runner import T2IRunConfig, run_t2i_optimize
-    from promptopt.cases import pick_random_kv_case
+    from promptopt.cases import pick_random_synth_prompt
 
     batch_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_dir = _PROJECT_ROOT / OUTPUT_ROOT / f"batch_{batch_id}"
     batch_dir.mkdir(parents=True, exist_ok=True)
+    lib_path = _PROJECT_ROOT / PROMPT_LIBRARY
 
     manifest: list[dict] = []
     total = len(CASE_SEEDS)
@@ -92,19 +94,19 @@ def main() -> None:
     last_report = ""
 
     for i, case_seed in enumerate(CASE_SEEDS, 1):
-        kv_case = pick_random_kv_case(seed=case_seed)
+        case = pick_random_synth_prompt(seed=case_seed, path=lib_path)
         run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out_root = str(_PROJECT_ROOT / OUTPUT_ROOT / f"t2i_{run_id}")
         os.makedirs(out_root, exist_ok=True)
 
         print("\n" + "#" * 70)
-        print(f"[{i}/{total}] case_seed={case_seed} → {kv_case.get('case_id')} {kv_case.get('main_title')}")
+        print(f"[{i}/{total}] case_seed={case_seed} → index={case['index']} chars={len(case['prompt'])}")
         print(f"输出: {out_root}")
         print("#" * 70)
 
         t0 = time.time()
         cfg = T2IRunConfig(
-            design_requirement=kv_case["design_requirement"],
+            initial_prompt=case["prompt"],
             category=CATEGORY,
             max_rounds=MAX_ROUNDS,
             train_runs=TRAIN_RUNS,
@@ -122,7 +124,7 @@ def main() -> None:
             merge_batch_size=MERGE_BATCH_SIZE,
             seed=SEED,
             out_root=out_root,
-            kv_case=kv_case,
+            case_meta=case,
             save_debug=SAVE_DEBUG,
             use_meta_prompt=USE_META_PROMPT,
             meta_prompt_max_chars=META_PROMPT_MAX_CHARS,
@@ -138,8 +140,7 @@ def main() -> None:
             row = {
                 "index": i,
                 "case_seed": case_seed,
-                "case_id": summary.get("case_id"),
-                "main_title": summary.get("main_title"),
+                "case_index": summary.get("case_index"),
                 "out_root": out_root,
                 "report": report_path,
                 "initial_score": (summary.get("initial") or {}).get("final_score"),
@@ -159,8 +160,7 @@ def main() -> None:
             manifest.append({
                 "index": i,
                 "case_seed": case_seed,
-                "case_id": kv_case.get("case_id"),
-                "main_title": kv_case.get("main_title"),
+                "case_index": case.get("index"),
                 "out_root": out_root,
                 "elapsed_s": elapsed,
                 "status": "error",
@@ -182,7 +182,7 @@ def main() -> None:
     print(f"清单: {batch_dir / 'manifest.json'}")
     for row in manifest:
         st = row.get("status", "?")
-        print(f"  [{row.get('index')}] {row.get('case_id')} {st} best={row.get('best_score')}")
+        print(f"  [{row.get('index')}] case_index={row.get('case_index')} {st} best={row.get('best_score')}")
     print("=" * 70)
 
     if OPEN_REPORT_LAST and last_report and Path(last_report).is_file():

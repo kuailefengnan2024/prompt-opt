@@ -2,10 +2,11 @@
 
 # 排序标准（优先级从高到低）
 
-1. **Systematic impact**：修复反复 failure 的 edits 排最前。
-2. **Complementarity**：填补缺口、不重复已有内容的 edits 更高。
-3. **Generality**：general principles 高于 task-specific 表述。
-4. **Actionability**：具体可执行高于 vague advice。
+1. **构图限定**：只选作用于【画面构图】的 edits；触碰【核心特征】/【画面风格】的直接排除。
+2. **Systematic impact**：修复反复 failure 的构图 edits 排最前。
+3. **Complementarity**：填补构图缺口、不重复已有内容的 edits 更高。
+4. **Generality**：general principles 高于 task-specific 表述。
+5. **Actionability**：具体可执行高于 vague advice。
 
 ---
 

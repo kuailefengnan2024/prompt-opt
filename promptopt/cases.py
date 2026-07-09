@@ -1,6 +1,6 @@
-# 【功能描述】从 KV user_cases 随机选取设计要求 case
-# 【输入】data/user_cases.json、可选 seed
-# 【输出】case 字典及 Phase0 字段 design_requirement / case_hint
+# 【功能描述】从合成 prompt 库随机选取初始文生图提示词
+# 【输入】data/kv_synth_prompts_100_only.json（字符串数组）、可选 seed / path
+# 【输出】含 index / prompt 的 case 字典
 
 from __future__ import annotations
 
@@ -10,53 +10,40 @@ from pathlib import Path
 from typing import Any
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_CASES_PATH = _PROJECT_ROOT / "data" / "user_cases.json"
-_KV_CASES_PATH = Path(r"D:\kv-generator\backend\assets_user\user_cases.json")
+_DEFAULT_PROMPTS_PATH = _PROJECT_ROOT / "data" / "kv_synth_prompts_100_only.json"
 
 
-def _resolve_cases_path(path: str | Path | None = None) -> Path:
+def _resolve_prompts_path(path: str | Path | None = None) -> Path:
     if path is not None:
         return Path(path)
-    if _DEFAULT_CASES_PATH.is_file():
-        return _DEFAULT_CASES_PATH
-    if _KV_CASES_PATH.is_file():
-        return _KV_CASES_PATH
-    raise FileNotFoundError(
-        f"未找到 user_cases.json，请复制至 {_DEFAULT_CASES_PATH} 或保留 KV 路径 {_KV_CASES_PATH}"
-    )
+    if _DEFAULT_PROMPTS_PATH.is_file():
+        return _DEFAULT_PROMPTS_PATH
+    raise FileNotFoundError(f"未找到 prompt 库: {_DEFAULT_PROMPTS_PATH}")
 
 
-def load_kv_cases(path: str | Path | None = None) -> list[dict[str, Any]]:
-    cases_path = _resolve_cases_path(path)
-    with open(cases_path, encoding="utf-8") as f:
-        cases = json.load(f)
-    if not isinstance(cases, list) or not cases:
-        raise ValueError(f"user_cases 格式无效: {cases_path}")
-    return cases
+def load_synth_prompts(path: str | Path | None = None) -> list[str]:
+    prompts_path = _resolve_prompts_path(path)
+    with open(prompts_path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list) or not data:
+        raise ValueError(f"prompt 库格式无效（须为非空字符串数组）: {prompts_path}")
+    prompts = [str(p).strip() for p in data if str(p).strip()]
+    if not prompts:
+        raise ValueError(f"prompt 库无有效条目: {prompts_path}")
+    return prompts
 
 
-def pick_random_kv_case(*, seed: int | None = None, path: str | Path | None = None) -> dict[str, Any]:
-    cases = load_kv_cases(path)
+def pick_random_synth_prompt(
+    *,
+    seed: int | None = None,
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    """随机取一条初始 prompt，返回 {index, prompt, source}。"""
+    prompts = load_synth_prompts(path)
     rng = random.Random(seed)
-    return dict(rng.choice(cases))
-
-
-def build_synthesize_fields(case: dict[str, Any]) -> dict[str, str]:
-    subjects = case.get("main_subjects") or []
-    imagery = (case.get("imagery_requirement") or "").strip()
-    style = (case.get("other_requirements") or "").strip()
-    if not style and "\n其他要求：" in case.get("design_requirement", ""):
-        style = case["design_requirement"].split("\n其他要求：", 1)[-1].strip()
-
-    hint_parts: list[str] = []
-    if imagery:
-        hint_parts.append(f"意象参考：{imagery}")
-    if subjects:
-        hint_parts.append(f"主体意象：{', '.join(subjects)}")
-    if style:
-        hint_parts.append(f"风格要求：{style}")
-
+    index = rng.randrange(len(prompts))
     return {
-        "design_requirement": case["design_requirement"].strip(),
-        "case_hint": "\n".join(hint_parts) or "无",
+        "index": index,
+        "prompt": prompts[index],
+        "source": str(_resolve_prompts_path(path)),
     }

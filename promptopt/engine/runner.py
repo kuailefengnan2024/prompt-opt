@@ -1,5 +1,5 @@
 # 【功能描述】T2I 单任务 Reflect 优化主循环（精简产物：initial/ + best/）
-# 【输入】design_requirement、runtime 参数、out_root、可选 kv_case
+# 【输入】initial_prompt、runtime 参数、out_root、可选 case_meta
 # 【输出】outputs 下 case.json、initial/、best/、summary.json
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import Any
 
 from promptopt.clients.aesthetic_bridge import build_aesthetic_client, configure_aesthetic_storage, score_image_sync
 from promptopt.clients.api_core_bridge import configure_api_clients, generate_image_sync
-from promptopt.synthesize import synthesize_from_kv_case, synthesize_initial_prompt
 from promptopt.trajectory import build_prediction_entry, format_rollout_trajectory
 from promptopt.evaluation.gate import evaluate_gate
 from promptopt.gradient.aggregate import merge_patches
@@ -30,7 +29,7 @@ from promptopt.utils import compute_score
 
 @dataclass
 class T2IRunConfig:
-    design_requirement: str
+    initial_prompt: str
     category: str
     max_rounds: int
     train_runs: int
@@ -48,10 +47,15 @@ class T2IRunConfig:
     merge_batch_size: int
     seed: int
     out_root: str
-    kv_case: dict[str, Any] | None = None
+    case_meta: dict[str, Any] | None = None
     save_debug: bool = False
     use_meta_prompt: bool = True
     meta_prompt_max_chars: int = 1500
+
+    @property
+    def design_requirement(self) -> str:
+        """审美打分仍要 design_requirement；用初始 prompt 顶替。"""
+        return self.initial_prompt
 
 
 def _write_json(path: str, data: Any) -> None:
@@ -152,6 +156,7 @@ def _update_meta_prompt(
     meta_prompt_content: str,
     history: list[dict[str, Any]],
     round_idx: int,
+    prompt_excerpt: str,
 ) -> tuple[str, dict[str, Any] | None]:
     """滚动更新跨轮记忆，返回 (新记忆, 本轮 meta 快照)。"""
     if not cfg.use_meta_prompt:
@@ -160,7 +165,7 @@ def _update_meta_prompt(
     digest = build_history_digest(history)
     t0 = time.time()
     result = run_meta_prompt_update(
-        design_requirement=cfg.design_requirement,
+        prompt_excerpt=prompt_excerpt,
         previous_meta=meta_prompt_content,
         round_digest=digest,
         max_chars=cfg.meta_prompt_max_chars,
@@ -408,15 +413,15 @@ def _write_deliverables(
         encoding="utf-8",
     )
 
-    (root / "design_requirement.txt").write_text(cfg.design_requirement.strip(), encoding="utf-8")
-    if cfg.kv_case:
+    (root / "initial_prompt.txt").write_text(cfg.initial_prompt.strip(), encoding="utf-8")
+    if cfg.case_meta:
         with open(root / "case.json", "w", encoding="utf-8") as f:
-            json.dump(cfg.kv_case, f, ensure_ascii=False, indent=2)
+            json.dump(cfg.case_meta, f, ensure_ascii=False, indent=2)
 
     summary = {
-        "case_id": (cfg.kv_case or {}).get("case_id"),
-        "main_title": (cfg.kv_case or {}).get("main_title"),
-        "design_requirement": cfg.design_requirement,
+        "case_index": (cfg.case_meta or {}).get("index"),
+        "case_source": (cfg.case_meta or {}).get("source"),
+        "initial_prompt_chars": len(cfg.initial_prompt),
         "initial": {
             "prompt": "initial/prompt.md",
             "image": "initial/image.png" if (initial_dir / "image.png").is_file() else None,
@@ -442,9 +447,11 @@ def _write_deliverables(
     with open(root / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    config_payload = {k: v for k, v in cfg.__dict__.items() if k != "kv_case"}
-    if cfg.kv_case:
-        config_payload["case_id"] = cfg.kv_case.get("case_id")
+    config_payload = {k: v for k, v in cfg.__dict__.items() if k not in ("case_meta", "initial_prompt")}
+    config_payload["initial_prompt_chars"] = len(cfg.initial_prompt)
+    if cfg.case_meta:
+        config_payload["case_index"] = cfg.case_meta.get("index")
+        config_payload["case_source"] = cfg.case_meta.get("source")
     with open(root / "config.json", "w", encoding="utf-8") as f:
         json.dump(config_payload, f, indent=2, ensure_ascii=False)
 
@@ -466,13 +473,12 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
     build_aesthetic_client(cfg.aesthetic_ensemble)
     reset_token_tracker()
 
-    # Phase 0：LLM 合成初始 prompt
-    print("\n[Phase 0] 从设计要求合成初始 prompt ...")
-    if cfg.kv_case:
-        prompt_v0 = synthesize_from_kv_case(cfg.kv_case)
-    else:
-        prompt_v0 = synthesize_initial_prompt(cfg.design_requirement)
-    print(f"  prompt_v0: {len(prompt_v0)} chars")
+    prompt_v0 = (cfg.initial_prompt or "").strip()
+    if not prompt_v0:
+        raise ValueError("initial_prompt 为空")
+    print(f"\n[Init] 使用库内 prompt（{len(prompt_v0)} chars），跳过 Phase0 合成")
+    if cfg.case_meta and cfg.case_meta.get("index") is not None:
+        print(f"  case_index={cfg.case_meta.get('index')}")
 
     initial_dir = Path(out_root) / "initial"
     initial_dir.mkdir(parents=True, exist_ok=True)
@@ -566,6 +572,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
                 meta_prompt_content=meta_prompt_content,
                 history=history,
                 round_idx=round_idx,
+                prompt_excerpt=prompt_v0,
             )
             if meta_snap:
                 step_rec["meta_prompt"] = meta_snap
@@ -651,6 +658,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             meta_prompt_content=meta_prompt_content,
             history=history,
             round_idx=round_idx,
+            prompt_excerpt=prompt_v0,
         )
         if meta_snap:
             step_rec["meta_prompt"] = meta_snap

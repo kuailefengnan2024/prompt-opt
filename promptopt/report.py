@@ -211,8 +211,11 @@ def generate_run_report(out_root: str | Path) -> str:
 
     rounds = _collect_rounds(root)
     run_name = root.name
-    title = str(summary.get("main_title") or case.get("main_title") or "")
-    case_id = str(summary.get("case_id") or case.get("case_id") or "")
+    case_index = summary.get("case_index")
+    if case_index is None:
+        case_index = case.get("index")
+    title = f"case #{case_index}" if case_index is not None else run_name
+    case_label = f"index={case_index}" if case_index is not None else "—"
 
     round_cards = "".join(_round_card(r, root, is_best=(r["idx"] == best_step)) for r in rounds)
 
@@ -286,14 +289,14 @@ body{{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var
 <body>
 <div class="top">
   <h1>{_esc(title)}</h1>
-  <span class="meta">{_esc(case_id)} · {_esc(run_name)}</span>
+  <span class="meta">{_esc(case_label)} · {_esc(run_name)}</span>
   <span class="chip">Initial {init_sc}</span>
   <span class="chip up">Best {best_sc} @R{best_step}</span>
 </div>
 <div class="layout">
   <aside class="anchor">
     <div class="anchor-card">
-      <h2>输入 · Phase0</h2>
+      <h2>输入 · Initial</h2>
       <div class="body">{"<img src='" + _esc(initial_img) + "' alt='initial'/>" if initial_img else "<span class='muted'>无图</span>"}</div>
       <div class="sc init">{init_sc}</div>
     </div>

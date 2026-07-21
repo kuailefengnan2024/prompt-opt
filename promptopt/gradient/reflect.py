@@ -13,6 +13,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from promptopt.model import chat_optimizer
+from promptopt.design_requirement import format_design_requirement_section
 from promptopt.optimizer.meta_prompt import format_meta_prompt_context
 from promptopt.optimizer.update_modes import (
     get_payload_items,
@@ -21,7 +22,7 @@ from promptopt.optimizer.update_modes import (
     payload_label,
     truncate_payload,
 )
-from promptopt.templates import fill_prompt, has_prompt
+from promptopt.templates import fill_prompt, get_prompt_scope_section, has_prompt
 from promptopt.utils import extract_json
 
 
@@ -42,10 +43,13 @@ def _build_flat_analyst_user(
     trajectory_count: int,
     step_buffer_context: str,
     meta_prompt_context: str,
+    design_requirement: str = "",
 ) -> str:
     mode = normalize_update_mode(update_mode)
     ctx = (step_buffer_context or "").strip()
     meta = format_meta_prompt_context(meta_prompt_context)
+    design = format_design_requirement_section(design_requirement)
+    scope = get_prompt_scope_section()
     return fill_prompt(template_name, {
         "current_prompt": prompt_content,
         "edit_budget": str(edit_budget),
@@ -54,6 +58,8 @@ def _build_flat_analyst_user(
         "trajectories": trajectories_text,
         "previous_steps_section": _optional_section("先前步骤摘要", ctx),
         "meta_section": meta.strip(),
+        "design_requirement_section": design.strip(),
+        "prompt_scope_section": scope,
     })
 
 
@@ -258,6 +264,7 @@ def run_error_analyst_minibatch(
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
     meta_prompt_context: str = "",
+    design_requirement: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
     """单次 optimizer 调用分析一组失败 trajectory 的 minibatch。
@@ -309,6 +316,7 @@ def run_error_analyst_minibatch(
         trajectory_count=len(items),
         step_buffer_context=ctx,
         meta_prompt_context=meta_prompt_context,
+        design_requirement=design_requirement,
     )
 
     try:
@@ -338,6 +346,7 @@ def run_success_analyst_minibatch(
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
     meta_prompt_context: str = "",
+    design_requirement: str = "",
     update_mode: str = "patch",
 ) -> dict | None:
     """单次 optimizer 调用分析一组成功 trajectory 的 minibatch。
@@ -377,6 +386,7 @@ def run_success_analyst_minibatch(
         trajectory_count=len(items),
         step_buffer_context=ctx,
         meta_prompt_context=meta_prompt_context,
+        design_requirement=design_requirement,
     )
 
     try:
@@ -434,6 +444,7 @@ def run_minibatch_reflect(
     trajectory_memory_context: str = "",
     step_buffer_context: str = "",
     meta_prompt_context: str = "",
+    design_requirement: str = "",
     update_mode: str = "patch",
 ) -> list[dict | None]:
     """完整 minibatch reflect 阶段：分组 → 并行 optimizer 调用 → patch。
@@ -485,7 +496,7 @@ def run_minibatch_reflect(
     n_fail_batches = len(fail_batches)
     n_succ_batches = len(succ_batches)
     print(
-        f"    [2/6 REFLECT minibatch] "
+        f"    [2/5 REFLECT minibatch] "
         f"failure={len(failures)}→{n_fail_batches} groups  "
         f"success={len(successes)}→{n_succ_batches} groups  "
         f"(M={minibatch_size}, L={edit_budget}, workers={workers})"
@@ -523,6 +534,7 @@ def run_minibatch_reflect(
             rejection_context=rejection_context,
             trajectory_memory_context=trajectory_memory_context,
             meta_prompt_context=meta_prompt_context,
+            design_requirement=design_requirement,
             update_mode=update_mode,
         )
         return f"minibatch_fail_{idx:03d}", patch
@@ -535,6 +547,7 @@ def run_minibatch_reflect(
             step_buffer_context=step_buffer_context,
             trajectory_memory_context=trajectory_memory_context,
             meta_prompt_context=meta_prompt_context,
+            design_requirement=design_requirement,
             update_mode=update_mode,
         )
         return f"minibatch_succ_{idx:03d}", patch

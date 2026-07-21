@@ -9,6 +9,7 @@ import traceback
 from typing import Any
 
 from promptopt.model import chat_optimizer
+from promptopt.design_requirement import format_design_requirement_section
 from promptopt.templates import fill_prompt, has_prompt
 from promptopt.utils import extract_json
 
@@ -68,6 +69,7 @@ def build_round_digest(
     current_score: float | None = None,
     best_score: float | None = None,
     ranked_patch: dict[str, Any] | None = None,
+    merged_patch: dict[str, Any] | None = None,
     rollout_results: list[dict[str, Any]] | None = None,
     gate_results: list[dict[str, Any]] | None = None,
     extra_note: str = "",
@@ -88,7 +90,7 @@ def build_round_digest(
     if extra_note.strip():
         lines.append(f"- note: {extra_note.strip()}")
     lines.append("- patch_tried:")
-    lines.append(_summarize_edits(ranked_patch))
+    lines.append(_summarize_edits(merged_patch or ranked_patch))
     return "\n".join(lines)
 
 
@@ -108,7 +110,7 @@ def build_history_digest(history: list[dict[str, Any]], max_rounds: int = 4) -> 
                 gate_soft=rec.get("gate_soft"),
                 current_score=rec.get("current_score"),
                 best_score=rec.get("best_score"),
-                ranked_patch=rec.get("ranked_patch"),
+                ranked_patch=rec.get("merged_patch") or rec.get("ranked_patch"),
                 extra_note=str(rec.get("meta_note", "") or ""),
             )
         )
@@ -118,6 +120,7 @@ def build_history_digest(history: list[dict[str, Any]], max_rounds: int = 4) -> 
 def run_meta_prompt_update(
     *,
     prompt_excerpt: str,
+    design_requirement: str = "",
     previous_meta: str,
     round_digest: str,
     max_chars: int = DEFAULT_META_MAX_CHARS,
@@ -128,6 +131,7 @@ def run_meta_prompt_update(
 
     user = fill_prompt("meta_prompt", {
         "prompt_excerpt": _clip(prompt_excerpt, 800),
+        "design_requirement_section": format_design_requirement_section(design_requirement).strip(),
         "previous_meta": previous_meta.strip() or "（空）",
         "round_digest": round_digest.strip() or "（无新轮次信息）",
         "max_chars": str(max_chars),

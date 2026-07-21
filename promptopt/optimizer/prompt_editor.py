@@ -1,4 +1,4 @@
-"""【功能描述】Reflect prompt 操作 — 编辑应用与 patch 处理；Update 阶段将排序后的编辑集应用到当前 prompt，类比 optimizer.step()。硬保护【核心特征】与【画面风格】，仅允许改动【画面构图】。
+"""【功能描述】Reflect prompt 操作 — 编辑应用与 patch 处理。硬保护约束层（【核心特征】【画面风格】），仅允许改动可改层（【画面构图】：元素及其构图状态、布局相关色彩）。
 
 【输入】prompt 文档字符串、Edit/Patch 实例或 dict。
 
@@ -18,6 +18,15 @@ SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 _LOCKED_TITLES = ("【核心特征】", "【画面风格】")
 _COMPOSITION_TITLE = "【画面构图】"
 _SECTION_START_RE = re.compile(r"【[^】]+】")
+_MAX_REPLACE_RATIO = 0.35  # 无段落标题时防止误改整段约束/风格
+
+
+def _replace_target_too_large(prompt: str, target: str) -> bool:
+    p = (prompt or "").strip()
+    t = (target or "").strip()
+    if not p or not t:
+        return False
+    return len(t) > len(p) * _MAX_REPLACE_RATIO
 
 
 def _is_in_slow_update_region(prompt: str, target: str) -> bool:
@@ -184,6 +193,9 @@ def _apply_edit_with_report(prompt: str, edit: EditType | dict) -> tuple[str, di
             return prompt, report
         if _target_touches_locked(prompt, target):
             report["status"] = "skipped_locked_section"
+            return prompt, report
+        if _replace_target_too_large(prompt, target):
+            report["status"] = "skipped_replace_target_too_large"
             return prompt, report
         candidate = prompt.replace(target, content, 1)
         if not _locked_sections_intact(prompt, candidate):

@@ -10,6 +10,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from promptopt.model import chat_optimizer
+from promptopt.design_requirement import format_design_requirement_section
 from promptopt.optimizer.meta_prompt import format_meta_prompt_context
 from promptopt.optimizer.update_modes import (
     get_payload_items,
@@ -17,7 +18,8 @@ from promptopt.optimizer.update_modes import (
     payload_key,
     payload_label,
 )
-from promptopt.templates import fill_prompt, has_prompt
+from promptopt.optimizer.clip import clip_edits
+from promptopt.templates import fill_prompt, get_prompt_scope_section, has_prompt
 from promptopt.utils import extract_json
 
 
@@ -29,12 +31,16 @@ def _merge_batch(
     system_prompt: str,
     update_mode: str,
     meta_prompt_context: str = "",
+    design_requirement: str = "",
+    edit_budget: int = 4,
     level: int = 1,
     label: str = "",
 ) -> dict:
     """调用 optimizer LLM 将一批 patch 合并为一个。"""
     patches_text = json.dumps(patches, ensure_ascii=False, indent=2)
     optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
+    design_ctx = format_design_requirement_section(design_requirement)
+    scope_ctx = get_prompt_scope_section()
 
     if not has_prompt("merge_failure"):
         raise FileNotFoundError("缺少模板 promptopt/prompts/merge_failure.md")
@@ -46,9 +52,13 @@ def _merge_batch(
         "patch_count": str(len(patches)),
         "merge_level": str(level),
         "patches_json": patches_text,
+        "design_requirement_section": design_ctx.strip(),
+        "prompt_scope_section": scope_ctx,
+        "edit_budget": str(edit_budget),
     })
-    if optimizer_ctx.strip():
-        user = f"{optimizer_ctx.strip()}\n\n{user}"
+    prefix_parts = [p for p in (scope_ctx, design_ctx.strip(), optimizer_ctx.strip()) if p]
+    if prefix_parts:
+        user = "\n\n".join(prefix_parts) + "\n\n" + user
     system = ""
     try:
         response, _ = chat_optimizer(
@@ -85,6 +95,8 @@ def _hierarchical_merge(
     label: str = "",
     workers: int = 16,
     meta_prompt_context: str = "",
+    design_requirement: str = "",
+    edit_budget: int = 4,
 ) -> dict:
     """使用给定 system prompt 层次化合并 N 个 patch。
 
@@ -125,7 +137,7 @@ def _hierarchical_merge(
                 futs = {
                     ex.submit(
                         _merge_batch, prompt_content, batch, system_prompt, update_mode,
-                        meta_prompt_context, level, label,
+                        meta_prompt_context, design_requirement, edit_budget, level, label,
                     ): idx
                     for idx, batch in to_merge
                 }
@@ -146,6 +158,23 @@ def _hierarchical_merge(
     return current[0]
 
 
+def _finalize_merged_patch(
+    patch: dict,
+    *,
+    edit_budget: int,
+    update_mode: str,
+    verbose: bool,
+) -> dict:
+    clipped = clip_edits(patch, max_edits=edit_budget, update_mode=update_mode)
+    details = clipped.get("clip_details")
+    if verbose and isinstance(details, dict) and details.get("input_count", 0) > details.get("output_count", 0):
+        print(
+            f"    [3/5 CLIP] rule {details['input_count']}→{details['output_count']} "
+            f"{payload_label(update_mode)} (budget={edit_budget})"
+        )
+    return clipped
+
+
 # ── 公共 API ────────────────────────────────────────────────────────────────
 
 def merge_patches(
@@ -157,6 +186,8 @@ def merge_patches(
     workers: int = 16,
     update_mode: str = "patch",
     meta_prompt_context: str = "",
+    design_requirement: str = "",
+    edit_budget: int = 4,
 ) -> dict:
     """失败优先的层次化合并，并跟踪 support count。
 
@@ -168,7 +199,7 @@ def merge_patches(
     """
     if verbose:
         print(
-            f"    [3/6 AGGREGATE] "
+            f"    [3/5 AGGREGATE] "
             f"failure={len(failure_patches)} success={len(success_patches)} "
             f"(parallel, workers={workers})"
         )
@@ -179,27 +210,48 @@ def merge_patches(
         prompt_content, failure_patches, "", update_mode,
         batch_size, verbose, label="failure", workers=workers,
         meta_prompt_context=meta_prompt_context,
+        design_requirement=design_requirement,
+        edit_budget=edit_budget,
     )
 
     success_merged = _hierarchical_merge(
         prompt_content, success_patches, "", update_mode,
         batch_size, verbose, label="success", workers=workers,
         meta_prompt_context=meta_prompt_context,
+        design_requirement=design_requirement,
+        edit_budget=edit_budget,
     )
 
     f_edits = get_payload_items(failure_merged, update_mode)
     s_edits = get_payload_items(success_merged, update_mode)
 
     if not f_edits and not s_edits:
-        return {"reasoning": "no updates from either group", payload_key(update_mode): []}
+        return _finalize_merged_patch(
+            {"reasoning": "no updates from either group", payload_key(update_mode): []},
+            edit_budget=edit_budget,
+            update_mode=update_mode,
+            verbose=verbose,
+        )
     if not s_edits:
-        return failure_merged
+        return _finalize_merged_patch(
+            failure_merged,
+            edit_budget=edit_budget,
+            update_mode=update_mode,
+            verbose=verbose,
+        )
     if not f_edits:
-        return success_merged
+        return _finalize_merged_patch(
+            success_merged,
+            edit_budget=edit_budget,
+            update_mode=update_mode,
+            verbose=verbose,
+        )
 
     combined_patches = [failure_merged, success_merged]
     combined_text = json.dumps(combined_patches, ensure_ascii=False, indent=2)
     optimizer_ctx = format_meta_prompt_context(meta_prompt_context)
+    design_ctx = format_design_requirement_section(design_requirement)
+    scope_ctx = get_prompt_scope_section()
     if not has_prompt("merge_final"):
         raise FileNotFoundError("缺少模板 promptopt/prompts/merge_final.md")
     user = fill_prompt("merge_final", {
@@ -207,9 +259,13 @@ def merge_patches(
         "failure_edit_count": str(len(f_edits)),
         "success_edit_count": str(len(s_edits)),
         "combined_patches_json": combined_text,
+        "design_requirement_section": design_ctx.strip(),
+        "prompt_scope_section": scope_ctx,
+        "edit_budget": str(edit_budget),
     })
-    if optimizer_ctx.strip():
-        user = f"{optimizer_ctx.strip()}\n\n{user}"
+    prefix_parts = [p for p in (scope_ctx, design_ctx.strip(), optimizer_ctx.strip()) if p]
+    if prefix_parts:
+        user = "\n\n".join(prefix_parts) + "\n\n" + user
     try:
         response, _ = chat_optimizer(
             system="",
@@ -226,11 +282,21 @@ def merge_patches(
                     f"    [aggregate final] "
                     f"{len(f_edits)}+{len(s_edits)} → {len(final[key])} {payload_label(update_mode)}"
                 )
-            return final
+            return _finalize_merged_patch(
+                final,
+                edit_budget=edit_budget,
+                update_mode=update_mode,
+                verbose=verbose,
+            )
     except Exception:  # noqa: BLE001
         pass
 
-    return {
-        "reasoning": "fallback: failure first, then success",
-        payload_key(update_mode): f_edits + s_edits,
-    }
+    return _finalize_merged_patch(
+        {
+            "reasoning": "fallback: failure first, then success",
+            payload_key(update_mode): f_edits + s_edits,
+        },
+        edit_budget=edit_budget,
+        update_mode=update_mode,
+        verbose=verbose,
+    )

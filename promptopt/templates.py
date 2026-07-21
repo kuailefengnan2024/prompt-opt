@@ -33,6 +33,13 @@ def fill_prompt(name: str, fields: dict[str, str]) -> str:
     return content
 
 
+def get_prompt_scope_section() -> str:
+    """语义分层 SSOT，供 Reflect / Merge 注入（与输入是否三段式无关）。"""
+    if has_prompt("prompt_scope"):
+        return load_prompt("prompt_scope").strip()
+    return ""
+
+
 def list_prompts() -> list[str]:
     if not _PROMPTS_DIR.is_dir():
         return []

@@ -2,15 +2,21 @@
 1. **Failure-driven**（corrective，HIGH priority）
 2. **Success-driven**（reinforcement，lower priority）
 
+{prompt_scope_section}
+
 # 合并准则
 
-1. **构图限定**：最终 edits 只能改【画面构图】；【核心特征】与【画面风格】禁止改动。
+1. **可改层限定**：最终 edits 只能改元素/构图/布局色彩；约束层（设计要求、核心特征语义、风格定调）禁止改动，**与输入是否有【】标题无关**。
 2. **FAILURE PATCHES TAKE PRIORITY**：除非与 success 直接冲突，否则保留 failure edits。
 3. **Deduplicate**：同一点冲突时保留 failure version。
 4. **Preserve success insights**：纳入 failure 尚未覆盖的 success edits。
 5. 每条 edit 携带 support_count 和 source_type。
+6. **Design alignment**：最终 patch 不得偏离原始设计要求。
+7. **Budget**：最终输出 edits **不得超过 {edit_budget} 条**；failure 组优先保留。
 
 ---
+
+{design_requirement_section}
 
 # 当前提示词
 

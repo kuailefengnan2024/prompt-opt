@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from promptopt.clients.aesthetic_bridge import build_aesthetic_client, configure_aesthetic_storage, score_image_sync
+from promptopt.design_requirement import resolve_design_requirement
 from promptopt.clients.api_core_bridge import configure_api_clients, generate_image_sync
 from promptopt.trajectory import build_prediction_entry, format_rollout_trajectory
 from promptopt.evaluation.gate import evaluate_gate
@@ -20,7 +21,6 @@ from promptopt.gradient.aggregate import merge_patches
 from promptopt.gradient.reflect import run_minibatch_reflect
 from promptopt.model.api_core_backend import configure_api_core_llm, get_token_summary, reset_token_tracker
 from promptopt.model.backend_config import set_optimizer_backend
-from promptopt.optimizer.clip import rank_and_select
 from promptopt.optimizer.meta_prompt import build_history_digest, run_meta_prompt_update
 from promptopt.optimizer.prompt_editor import apply_patch_with_report
 from promptopt.report import generate_run_report
@@ -54,8 +54,8 @@ class T2IRunConfig:
 
     @property
     def design_requirement(self) -> str:
-        """审美打分仍要 design_requirement；用初始 prompt 顶替。"""
-        return self.initial_prompt
+        """审美打分与优化链路的结构化设计要求锚点。"""
+        return resolve_design_requirement(self.initial_prompt, self.case_meta)
 
 
 def _write_json(path: str, data: Any) -> None:
@@ -119,7 +119,6 @@ def _persist_round_artifacts(
     rollout_dir: str,
     patches_dir: str | None = None,
     merged_patch: dict[str, Any] | None = None,
-    ranked_patch: dict[str, Any] | None = None,
     candidate_prompt: str | None = None,
     gate_results: list[dict[str, Any]] | None = None,
     gate_dir: str | None = None,
@@ -134,8 +133,6 @@ def _persist_round_artifacts(
         _mirror_patches(patches_dir, str(rd / "patch"))
     if merged_patch is not None:
         _write_json(str(rd / "patch" / "merged_patch.json"), merged_patch)
-    if ranked_patch is not None:
-        _write_json(str(rd / "patch" / "ranked_patch.json"), ranked_patch)
     if candidate_prompt is not None:
         (rd / "candidate_prompt.md").write_text(candidate_prompt, encoding="utf-8")
     if gate_results is not None:
@@ -166,6 +163,7 @@ def _update_meta_prompt(
     t0 = time.time()
     result = run_meta_prompt_update(
         prompt_excerpt=prompt_excerpt,
+        design_requirement=cfg.design_requirement,
         previous_meta=meta_prompt_content,
         round_digest=digest,
         max_chars=cfg.meta_prompt_max_chars,
@@ -359,12 +357,12 @@ def _copy_image(src: str | None, dest: str) -> bool:
 
 
 def _slim_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """summary 用轻量历史，避免 ranked_patch / meta_prompt 撑大 JSON。"""
+    """summary 用轻量历史，避免 merged_patch / meta_prompt 撑大 JSON。"""
     slim: list[dict[str, Any]] = []
     for rec in history:
         if not isinstance(rec, dict):
             continue
-        row = {k: v for k, v in rec.items() if k not in ("ranked_patch", "meta_prompt")}
+        row = {k: v for k, v in rec.items() if k not in ("merged_patch", "meta_prompt")}
         slim.append(row)
     return slim
 
@@ -476,7 +474,9 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
     prompt_v0 = (cfg.initial_prompt or "").strip()
     if not prompt_v0:
         raise ValueError("initial_prompt 为空")
+    design_req = cfg.design_requirement
     print(f"\n[Init] 使用库内 prompt（{len(prompt_v0)} chars），跳过 Phase0 合成")
+    print(f"  设计要求: {len(design_req)} chars")
     if cfg.case_meta and cfg.case_meta.get("index") is not None:
         print(f"  case_index={cfg.case_meta.get('index')}")
 
@@ -522,7 +522,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             label="train",
         )
         _, r_soft = compute_score(rollout_results)
-        print(f"  [1/6 Rollout] soft={r_soft:.4f}")
+        print(f"  [1/5 Rollout] soft={r_soft:.4f}")
 
         patches_dir = os.path.join(step_dir, "patches")
         raw_patches = run_minibatch_reflect(
@@ -539,6 +539,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             success_system=None,
             update_mode="patch",
             meta_prompt_context=meta_prompt_content,
+            design_requirement=design_req,
         )
         failure_patches = []
         success_patches = []
@@ -596,15 +597,10 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             workers=cfg.analyst_workers,
             update_mode="patch",
             meta_prompt_context=meta_prompt_content,
+            design_requirement=design_req,
+            edit_budget=cfg.edit_budget,
         )
-        ranked_patch = rank_and_select(
-            current_prompt,
-            merged_patch,
-            max_edits=cfg.edit_budget,
-            update_mode="patch",
-            meta_prompt_context=meta_prompt_content,
-        )
-        candidate_prompt, _apply_report = apply_patch_with_report(current_prompt, ranked_patch)
+        candidate_prompt, _apply_report = apply_patch_with_report(current_prompt, merged_patch)
 
         gate_dir = os.path.join(step_dir, "gate_rollout")
         gate_results = _rollout_prompt(
@@ -645,11 +641,11 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             "best_score": best_score,
             "best_step": best_step,
             "wall_time_s": round(time.time() - t0, 1),
-            "ranked_patch": ranked_patch,
+            "merged_patch": merged_patch,
         }
         history.append(step_rec)
         print(
-            f"  [6/6 Gate] action={gate.action} gate_soft={cand_soft:.4f} "
+            f"  [5/5 Gate] action={gate.action} gate_soft={cand_soft:.4f} "
             f"current={current_score:.4f} best={best_score:.4f}"
         )
         meta_prompt_content, meta_snap = _update_meta_prompt(
@@ -670,7 +666,6 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             rollout_dir=rollout_dir,
             patches_dir=patches_dir,
             merged_patch=merged_patch,
-            ranked_patch=ranked_patch,
             candidate_prompt=candidate_prompt,
             gate_results=gate_results,
             gate_dir=gate_dir,

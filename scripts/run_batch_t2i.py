@@ -28,9 +28,9 @@ PROMPT_LIBRARY = "data/kv_synth_prompts_100_only.json"
 
 CATEGORY = "3d"
 MAX_ROUNDS = 8
-TRAIN_RUNS = 2
+TRAIN_RUNS = 4
 GATE_RUNS = 2
-EDIT_BUDGET = 3
+EDIT_BUDGET = 6
 HARD_THRESHOLD = 65.0
 MIN_ENSEMBLE_CONFIDENCE = 0.5
 REASON_MIN_DIM_CONFIDENCE = 0.833
@@ -46,8 +46,9 @@ OUTPUT_ROOT = "outputs"
 SAVE_DEBUG = False
 USE_META_PROMPT = True
 META_PROMPT_MAX_CHARS = 1500
+DESIGN_REQUIREMENT = ""  # 设计要求直通；空则从 prompt 摘要解析
 
-# 批量跑时不每个都弹浏览器；仅最后一个完成后打开
+# 批量跑时不每个都弹浏览器；完成后打开 Tab 仪表盘
 OPEN_REPORT_EACH = False
 OPEN_REPORT_LAST = True
 
@@ -105,6 +106,9 @@ def main() -> None:
         print("#" * 70)
 
         t0 = time.time()
+        design_req = (DESIGN_REQUIREMENT or "").strip()
+        if design_req:
+            case = {**case, "design_requirement": design_req}
         cfg = T2IRunConfig(
             initial_prompt=case["prompt"],
             category=CATEGORY,
@@ -125,6 +129,7 @@ def main() -> None:
             seed=SEED,
             out_root=out_root,
             case_meta=case,
+            design_requirement_text=design_req,
             save_debug=SAVE_DEBUG,
             use_meta_prompt=USE_META_PROMPT,
             meta_prompt_max_chars=META_PROMPT_MAX_CHARS,
@@ -139,6 +144,7 @@ def main() -> None:
 
             row = {
                 "index": i,
+                "label": f"batch_{i}",
                 "case_seed": case_seed,
                 "case_index": summary.get("case_index"),
                 "out_root": out_root,
@@ -159,6 +165,7 @@ def main() -> None:
             elapsed = round(time.time() - t0, 1)
             manifest.append({
                 "index": i,
+                "label": f"batch_{i}",
                 "case_seed": case_seed,
                 "case_index": case.get("index"),
                 "out_root": out_root,
@@ -168,24 +175,41 @@ def main() -> None:
             })
             print(f"  ✗ 失败: {exc}")
 
+        payload = {
+            "session_id": f"batch_{batch_id}",
+            "batch_id": batch_id,
+            "total": total,
+            "completed": sum(1 for r in manifest if r.get("status") == "ok"),
+            "runs": manifest,
+        }
         with open(batch_dir / "manifest.json", "w", encoding="utf-8") as f:
-            json.dump({
-                "batch_id": batch_id,
-                "total": total,
-                "completed": len(manifest),
-                "runs": manifest,
-            }, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    from promptopt.report_trace import write_session_dashboard
+
+    dash_manifest = {
+        "session_id": f"batch_{batch_id}",
+        "total": total,
+        "completed": sum(1 for r in manifest if r.get("status") == "ok"),
+        "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "runs": manifest,
+    }
+    dash = write_session_dashboard(batch_dir, dash_manifest)
 
     batch_elapsed = round(time.time() - t_batch, 1)
     print("\n" + "=" * 70)
     print(f"批量完成 {len(manifest)}/{total}，总耗时 {batch_elapsed}s")
     print(f"清单: {batch_dir / 'manifest.json'}")
+    print(f"仪表盘: {dash}")
     for row in manifest:
         st = row.get("status", "?")
         print(f"  [{row.get('index')}] case_index={row.get('case_index')} {st} best={row.get('best_score')}")
     print("=" * 70)
 
-    if OPEN_REPORT_LAST and last_report and Path(last_report).is_file():
+    if OPEN_REPORT_LAST and Path(dash).is_file():
+        webbrowser.open(Path(dash).resolve().as_uri())
+        print(f"已打开仪表盘: {dash}")
+    elif OPEN_REPORT_LAST and last_report and Path(last_report).is_file():
         webbrowser.open(Path(last_report).resolve().as_uri())
         print(f"已打开最后一个报告: {last_report}")
 

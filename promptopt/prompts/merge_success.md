@@ -6,11 +6,11 @@
 
 1. **可改层限定**：只保留元素/构图/布局色彩 edits；丢弃改动约束层语义的 edits。
 2. **Deduplicate**：相似 patterns 只保留最 generalizable 版本。
-3. **Be conservative**：只强化已有 effective 构图行为。
+3. **Be conservative**：只强化已有 effective 构图行为；保持局部可归因优先。
 4. **Prevalent-pattern bias**：多轨迹出现的 patterns 最值得写入。
 5. **Support count**：估计每条 merged edit 的支持数。
 6. **Design alignment**：不得偏离原始设计要求。
-7. **Budget**：输出 edits **不得超过 {edit_budget} 条**。
+7. **Budget**：输出 edits **不得超过 {edit_budget} 条**；优先出图可见的结构性局部 replace。
 
 ---
 

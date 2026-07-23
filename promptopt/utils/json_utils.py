@@ -26,20 +26,3 @@ def extract_json(text: str) -> dict | None:
         except json.JSONDecodeError:
             pass
     return None
-
-
-def extract_json_array(text: str) -> list | None:
-    """从 LLM 响应文本中提取 JSON 数组。"""
-    m = re.search(r"```json\s*(.*?)```", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-    m = re.search(r"\[.*\]", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
-    return None

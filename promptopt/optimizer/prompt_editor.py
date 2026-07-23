@@ -18,10 +18,11 @@ SLOW_UPDATE_END = "<!-- SLOW_UPDATE_END -->"
 _LOCKED_TITLES = ("【核心特征】", "【画面风格】")
 _COMPOSITION_TITLE = "【画面构图】"
 _SECTION_START_RE = re.compile(r"【[^】]+】")
-_MAX_REPLACE_RATIO = 0.35  # 无段落标题时防止误改整段约束/风格
+_MAX_REPLACE_RATIO = 0.90  # 仅防误吞几乎整篇（含约束层）；构图段本身不设比例硬闸
 
 
 def _replace_target_too_large(prompt: str, target: str) -> bool:
+    """仅拒绝几乎覆盖全文的 target；构图段整段 replace 允许。"""
     p = (prompt or "").strip()
     t = (target or "").strip()
     if not p or not t:

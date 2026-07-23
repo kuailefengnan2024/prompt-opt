@@ -1,17 +1,12 @@
-"""【功能描述】打分与哈希工具：从 episode 结果计算 hard/soft 准确率，并对 prompt 内容生成短哈希。
-【输入】episode 结果列表（dict 或 `RolloutResult`）；prompt 文档字符串。
-【输出】`(hard, soft)` 元组；用于缓存的 16 位 `prompt_hash` 十六进制串。
+"""【功能描述】从 episode 结果计算 hard/soft 准确率。
+【输入】episode 结果列表（dict 或带 hard/soft 属性的对象）。
+【输出】`(hard, soft)` 元组。
 """
 from __future__ import annotations
 
-import hashlib
-
 
 def compute_score(results: list) -> tuple[float, float]:
-    """从 episode 结果列表计算 hard 与 soft 准确率。
-
-    同时接受普通 dict 与 :class:`~promptopt.types.RolloutResult` 实例。
-    """
+    """从 episode 结果列表计算 hard 与 soft 准确率。"""
     if not results:
         return 0.0, 0.0
 
@@ -24,8 +19,3 @@ def compute_score(results: list) -> tuple[float, float]:
     hard = sum(_hard(r) for r in results) / len(results)
     soft = sum(_soft(r) for r in results) / len(results)
     return hard, soft
-
-
-def prompt_hash(content: str) -> str:
-    """返回 prompt 内容的短确定性哈希（用于缓存）。"""
-    return hashlib.sha256(content.encode()).hexdigest()[:16]

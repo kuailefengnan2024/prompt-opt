@@ -66,13 +66,3 @@ def clip_edits(
             "max_edits": max_edits,
         },
     }
-
-
-def rank_and_select(
-    patch: dict,
-    max_edits: int,
-    update_mode: str = "patch",
-    **_ignored: Any,
-) -> dict:
-    """兼容旧调用签名；忽略 prompt / meta / design 参数。"""
-    return clip_edits(patch, max_edits=max_edits, update_mode=update_mode)

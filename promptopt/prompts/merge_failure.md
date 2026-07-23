@@ -12,7 +12,7 @@
 6. **Independence**：任意两条 edits 不得 target 同一 text region。
 7. **Support count**：估计每条 merged edit 有多少 source patches 支持。
 8. **Design alignment**：合并结果不得偏离原始设计要求。
-9. **Budget**：输出 edits **不得超过 {edit_budget} 条**；超出时在 failure 优先、support_count 高者优先的前提下自行取舍。
+9. **Budget**：输出 edits **不得超过 {edit_budget} 条**；优先保留**出图可见、结构性、可归因**的构图改动；failure 优先、support_count 高者优先。
 
 ---
 

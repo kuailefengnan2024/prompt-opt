@@ -33,6 +33,22 @@ def load_synth_prompts(path: str | Path | None = None) -> list[str]:
     return prompts
 
 
+def pick_synth_prompt_by_index(
+    index: int,
+    *,
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    """按库内下标取一条 prompt，返回 {index, prompt, source}。"""
+    prompts = load_synth_prompts(path)
+    if index < 0 or index >= len(prompts):
+        raise IndexError(f"index={index} 超出库大小 {len(prompts)}")
+    return {
+        "index": index,
+        "prompt": prompts[index],
+        "source": str(_resolve_prompts_path(path)),
+    }
+
+
 def pick_random_synth_prompt(
     *,
     seed: int | None = None,

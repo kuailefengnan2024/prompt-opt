@@ -23,7 +23,7 @@ from promptopt.model.api_core_backend import configure_api_core_llm, get_token_s
 from promptopt.model.backend_config import set_optimizer_backend
 from promptopt.optimizer.meta_prompt import build_history_digest, run_meta_prompt_update
 from promptopt.optimizer.prompt_editor import apply_patch_with_report
-from promptopt.report import generate_run_report
+from promptopt.report_trace import generate_run_report
 from promptopt.utils import compute_score
 
 
@@ -48,14 +48,20 @@ class T2IRunConfig:
     seed: int
     out_root: str
     case_meta: dict[str, Any] | None = None
+    design_requirement_text: str = ""  # 显式设计要求；空则从 case_meta / 标题摘要解析
     save_debug: bool = False
     use_meta_prompt: bool = True
     meta_prompt_max_chars: int = 1500
+    use_relative_success: bool = True  # True：按 batch 相对均值标 success，而非绝对 hard_threshold
 
     @property
     def design_requirement(self) -> str:
-        """审美打分与优化链路的结构化设计要求锚点。"""
-        return resolve_design_requirement(self.initial_prompt, self.case_meta)
+        """审美打分与优化链路的设计要求锚点（非整篇 prompt）。"""
+        return resolve_design_requirement(
+            self.initial_prompt,
+            self.case_meta,
+            design_requirement=self.design_requirement_text,
+        )
 
 
 def _write_json(path: str, data: Any) -> None:
@@ -73,8 +79,57 @@ def _rollout_score_rows(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "final_score": r.get("final_score"),
             "hard": r.get("hard"),
             "image": (r.get("extras") or {}).get("image_path"),
+            "trajectory_text": r.get("trajectory_text") or "",
         })
     return rows
+
+
+def _assign_relative_success(results: list[dict[str, Any]]) -> None:
+    """按本 batch soft 均值重标 hard：≥均值 → success，否则 failure。原地修改并刷新 trajectory。"""
+    scored = [
+        r for r in results
+        if r.get("soft") is not None and "aesthetic_error" not in str(r.get("fail_reason", ""))
+        and "image_gen_error" not in str(r.get("fail_reason", ""))
+    ]
+    if len(scored) < 2:
+        return
+    mean_soft = sum(float(r.get("soft") or 0) for r in scored) / len(scored)
+    for r in scored:
+        soft = float(r.get("soft") or 0)
+        new_hard = 1 if soft >= mean_soft else 0
+        r["hard"] = new_hard
+        detail = r.get("aesthetic_detail")
+        if isinstance(detail, dict):
+            r["trajectory_text"] = format_rollout_trajectory(
+                run_idx=int(str(r.get("id", "0")).split("_")[-1] or 0),
+                prompt_excerpt=str(r.get("_prompt_for_traj") or ""),
+                image_path=str((r.get("extras") or {}).get("image_path") or ""),
+                score_result=detail,
+                hard=new_hard,
+                soft=soft,
+                min_dim_confidence=float(r.get("_min_dim_conf") or 0.833),
+            )
+        r["fail_reason"] = (
+            "ok_relative" if new_hard
+            else f"below_batch_mean: soft={soft:.4f} mean={mean_soft:.4f}"
+        )
+
+
+def _format_step_buffer(rejected_patches: list[dict[str, Any]], limit: int = 3) -> str:
+    if not rejected_patches:
+        return ""
+    lines = ["近期被 Gate 拒绝的 patch（勿重复同类改法）:"]
+    for i, p in enumerate(rejected_patches[-limit:], 1):
+        reasoning = str(p.get("reasoning") or "")[:240]
+        edits = p.get("edits") or []
+        lines.append(f"{i}. reasoning: {reasoning}")
+        for j, e in enumerate(edits[:3]):
+            if not isinstance(e, dict):
+                continue
+            lines.append(
+                f"   edit[{j}] {e.get('op')} target={str(e.get('target', ''))[:80]!r}"
+            )
+    return "\n".join(lines)
 
 
 def _write_templates_manifest(out_root: str) -> None:
@@ -310,16 +365,36 @@ def _rollout_prompt(
             min_ensemble_confidence=cfg.min_ensemble_confidence,
         )
         row["id"] = run_id
-        pred = build_prediction_entry(run_idx=i, trajectory_text=row.get("trajectory_text", ""))
+        row["_prompt_for_traj"] = prompt
+        row["_min_dim_conf"] = cfg.reason_min_dim_confidence
+        results.append(row)
+        print(
+            f"      [{label}] run {i + 1}: soft={row.get('soft', 0):.4f} "
+            f"final={row.get('final_score', 0)} hard={row.get('hard', 0)}"
+        )
+
+    if cfg.use_relative_success and label == "train":
+        _assign_relative_success(results)
+        print(
+            f"      [{label}] 相对分流: success="
+            f"{sum(1 for r in results if r.get('hard'))}/"
+            f"{sum(1 for r in results if r.get('soft') is not None)}"
+        )
+
+    for row in results:
+        traj = row.get("trajectory_text") or ""
+        if not traj:
+            continue
+        run_id = str(row.get("id") or "run")
+        pred = build_prediction_entry(run_idx=0, trajectory_text=traj)
         pred["id"] = run_id
         pred_dir = os.path.join(predictions_dir, run_id)
         os.makedirs(pred_dir, exist_ok=True)
         with open(os.path.join(pred_dir, "conversation.json"), "w", encoding="utf-8") as f:
             json.dump(pred["conversation"], f, ensure_ascii=False, indent=2)
-        results.append(row)
         print(
-            f"      [{label}] run {i + 1}: soft={row.get('soft', 0):.4f} "
-            f"final={row.get('final_score', 0)} hard={row.get('hard', 0)}"
+            f"      [{label}] {run_id}: soft={row.get('soft', 0):.4f} "
+            f"hard={row.get('hard', 0)} ({row.get('fail_reason', '')})"
         )
     return results
 
@@ -503,6 +578,9 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
     best_image_path: str | None = initial_preview if initial_score_row else None
     history: list[dict[str, Any]] = []
     meta_prompt_content = ""
+    rejected_patches: list[dict[str, Any]] = []
+
+    Path(out_root, "design_requirement.txt").write_text(design_req, encoding="utf-8")
 
     for round_idx in range(1, cfg.max_rounds + 1):
         step_dir = os.path.join(work_root, f"round_{round_idx:03d}")
@@ -512,6 +590,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
         if meta_prompt_content:
             print(f"  [Meta] 注入记忆 {len(meta_prompt_content)} chars")
         round_input_prompt = current_prompt
+        step_buf = _format_step_buffer(rejected_patches)
 
         rollout_dir = os.path.join(step_dir, "rollout")
         rollout_results = _rollout_prompt(
@@ -540,6 +619,7 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             update_mode="patch",
             meta_prompt_context=meta_prompt_content,
             design_requirement=design_req,
+            step_buffer_context=step_buf,
         )
         failure_patches = []
         success_patches = []
@@ -631,6 +711,8 @@ def run_t2i_optimize(cfg: T2IRunConfig) -> dict[str, Any]:
             best_row = _pick_best_rollout(gate_results)
             if best_row:
                 best_image_path = (best_row.get("extras") or {}).get("image_path")
+        elif gate.action == "reject" and isinstance(merged_patch, dict):
+            rejected_patches.append(merged_patch)
 
         step_rec = {
             "round": round_idx,

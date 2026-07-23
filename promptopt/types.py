@@ -56,7 +56,6 @@ class Edit:
 class Patch:
     edits: list[Edit] = field(default_factory=list)
     reasoning: str = ""
-    ranking_details: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Patch:
@@ -65,17 +64,13 @@ class Patch:
         return cls(
             edits=[Edit.from_dict(e) if isinstance(e, dict) else e for e in raw],
             reasoning=d.get("reasoning", ""),
-            ranking_details=d.get("ranking_details"),
         )
 
     def to_dict(self) -> dict:
-        d: dict[str, Any] = {
+        return {
             "reasoning": self.reasoning,
             "edits": [e.to_dict() if isinstance(e, Edit) else e for e in self.edits],
         }
-        if self.ranking_details is not None:
-            d["ranking_details"] = self.ranking_details
-        return d
 
 
 @dataclass

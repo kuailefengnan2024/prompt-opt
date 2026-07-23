@@ -23,12 +23,14 @@ if str(_PROJECT_ROOT) not in sys.path:
 CASE_SEED = None  # None=每次随机；设整数可复现同一条库内 prompt
 CATEGORY = "3d"   # 品类：3d | graphic | illustration
 PROMPT_LIBRARY = "data/kv_synth_prompts_100_only.json"  # 字符串数组，入参只用 prompt
+# 设计要求（约束锚点）：直接填入即可；空则从主副标题/意象摘要解析，绝不塞整篇 prompt
+DESIGN_REQUIREMENT = ""
 
 # ── 训练循环 ────────────────────────────────────────────────────────────────
 MAX_ROUNDS = 8    # 正式跑满 N 轮，取 history 中 best_score 最高 prompt
 TRAIN_RUNS = 4    # 每轮 Reflect 前 rollout 张数（多次采样取均分）
 GATE_RUNS = 2     # Gate 验证张数（多次采样取均分）
-EDIT_BUDGET = 5   # 每步最多几条局部 patch（学习率，略放宽）
+EDIT_BUDGET = 6   # 每步最多几条局部 patch（出图可见的结构性改动，非整段重写）
 SEED = 42         # Reflect minibatch shuffle 等可复现种子
 
 # ── 审美打分 ────────────────────────────────────────────────────────────────
@@ -56,7 +58,7 @@ META_PROMPT_MAX_CHARS = 1500
 # ── 产物 / 调试 ─────────────────────────────────────────────────────────────
 OUTPUT_ROOT = "outputs"  # 每次运行子目录 outputs/<timestamp>/
 SAVE_DEBUG = False       # True：保留 _work 中间产物
-OPEN_REPORT = True       # 结束后用默认浏览器打开 report.html
+OPEN_REPORT = False      # 过夜/批量不弹浏览器
 
 # =============================================================================
 
@@ -94,7 +96,12 @@ def main() -> None:
         seed=CASE_SEED,
         path=_PROJECT_ROOT / PROMPT_LIBRARY,
     )
+    design_req = (DESIGN_REQUIREMENT or "").strip()
+    if design_req:
+        case = {**case, "design_requirement": design_req}
     print(f"随机库内 prompt: index={case['index']} chars={len(case['prompt'])}")
+    if design_req:
+        print(f"设计要求（显式）: {design_req[:120]}{'…' if len(design_req) > 120 else ''}")
 
     cfg = T2IRunConfig(
         initial_prompt=case["prompt"],
@@ -116,6 +123,7 @@ def main() -> None:
         seed=SEED,
         out_root=out_root,
         case_meta=case,
+        design_requirement_text=design_req,
         save_debug=SAVE_DEBUG,
         use_meta_prompt=USE_META_PROMPT,
         meta_prompt_max_chars=META_PROMPT_MAX_CHARS,
@@ -132,7 +140,7 @@ def main() -> None:
     print(f"  best_step:  {best.get('step')}")
     print(f"  产物:       {out_root}")
     print(f"  报告:       {summary.get('report', out_root + '/report.html')}")
-    print("  交付物:     initial/  best/  summary.json  report.html")
+    print("  交付物:     initial/  best/  summary.json  report.html（全流程 Trace）")
     print("=" * 60)
 
     report_path = summary.get("report") or str(Path(out_root) / "report.html")

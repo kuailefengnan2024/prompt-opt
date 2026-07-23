@@ -100,10 +100,80 @@ def _section(tag: str, title: str, body: str, note: str = "", *, as_md: bool = T
 def _img(run_dir: Path, rel: str, cap: str) -> str:
     if not (run_dir / rel).is_file():
         return ""
+    src = _esc(rel.replace("\\", "/"))
     return (
-        f'<figure class="thumb"><img src="{_esc(rel.replace(chr(92), "/"))}" loading="lazy"/>'
+        f'<figure class="thumb">'
+        f'<img class="lb-src" src="{src}" alt="{_esc(cap)}" loading="lazy" '
+        f'data-caption="{_esc(cap)}"/>'
         f"<figcaption>{_esc(cap)}</figcaption></figure>"
     )
+
+
+LIGHTBOX_CSS = r"""
+.thumb img.lb-src{cursor:zoom-in}
+.lb-overlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.88);align-items:center;justify-content:center;flex-direction:column;gap:.6rem}
+.lb-overlay.open{display:flex}
+.lb-overlay img{max-width:min(96vw,1600px);max-height:86vh;object-fit:contain;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.lb-cap{color:#c5cad6;font-size:.85rem;max-width:90vw;text-align:center}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;border:0;border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-size:1.6rem;cursor:pointer;line-height:1}
+.lb-nav:hover{background:rgba(255,255,255,.18)}
+.lb-prev{left:12px}.lb-next{right:12px}
+.lb-close{position:absolute;top:12px;right:16px;border:0;background:transparent;color:#fff;font-size:1.8rem;cursor:pointer;line-height:1;padding:.2rem .5rem}
+.lb-hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);color:#8b93a7;font-size:.72rem}
+"""
+
+
+LIGHTBOX_HTML = """
+<div class="lb-overlay" id="lb" role="dialog" aria-modal="true">
+  <button type="button" class="lb-close" id="lbClose" aria-label="close">&times;</button>
+  <button type="button" class="lb-nav lb-prev" id="lbPrev" aria-label="prev">&#8249;</button>
+  <img id="lbImg" src="" alt=""/>
+  <button type="button" class="lb-nav lb-next" id="lbNext" aria-label="next">&#8250;</button>
+  <div class="lb-cap" id="lbCap"></div>
+  <div class="lb-hint">← → 切换 · Esc 关闭 · 点击背景关闭</div>
+</div>
+"""
+
+
+LIGHTBOX_JS = r"""
+<script>
+(function(){
+  var imgs = Array.prototype.slice.call(document.querySelectorAll('img.lb-src'));
+  if (!imgs.length) return;
+  var ov = document.getElementById('lb');
+  var el = document.getElementById('lbImg');
+  var cap = document.getElementById('lbCap');
+  var idx = 0;
+  function show(i){
+    if (!imgs.length) return;
+    idx = (i + imgs.length) % imgs.length;
+    var n = imgs[idx];
+    el.src = n.currentSrc || n.src;
+    cap.textContent = (n.getAttribute('data-caption') || n.alt || '') + '  (' + (idx+1) + '/' + imgs.length + ')';
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function hide(){
+    ov.classList.remove('open');
+    el.src = '';
+    document.body.style.overflow = '';
+  }
+  imgs.forEach(function(img, i){
+    img.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); show(i); });
+  });
+  document.getElementById('lbClose').addEventListener('click', hide);
+  document.getElementById('lbPrev').addEventListener('click', function(e){ e.stopPropagation(); show(idx-1); });
+  document.getElementById('lbNext').addEventListener('click', function(e){ e.stopPropagation(); show(idx+1); });
+  ov.addEventListener('click', function(e){ if (e.target === ov) hide(); });
+  document.addEventListener('keydown', function(e){
+    if (!ov.classList.contains('open')) return;
+    if (e.key === 'Escape') hide();
+    else if (e.key === 'ArrowLeft') show(idx-1);
+    else if (e.key === 'ArrowRight') show(idx+1);
+  });
+})();
+</script>
+"""
 
 
 def _traj_from_scores(scores: list) -> str:
@@ -184,6 +254,7 @@ body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);c
 .thumb{margin:0;width:110px}
 .thumb img{width:100%;display:block;border-radius:5px;border:1px solid var(--line)}
 .thumb figcaption{font-size:.62rem;color:var(--muted);margin-top:.15rem}
+""" + LIGHTBOX_CSS + r"""
 .diff-body{font-size:.68rem;line-height:1.55;white-space:pre-wrap;word-break:break-word;background:#0e1219;border:1px solid var(--line);border-radius:8px;padding:.55rem;max-height:280px;overflow:auto}
 .diff-del{background:var(--del-bg);color:var(--del);text-decoration:line-through}
 .diff-add{background:var(--add-bg);color:var(--add);text-decoration:none}
@@ -499,6 +570,8 @@ def build_run_report_html(run_dir: str | Path, *, embed_tabs: str = "") -> str:
 <div class="board">
 {''.join(cols)}
 </div>
+{LIGHTBOX_HTML}
+{LIGHTBOX_JS}
 </body>
 </html>
 """
